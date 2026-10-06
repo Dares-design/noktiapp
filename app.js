@@ -1,7 +1,16 @@
 // ============================================================
-// KONFIGURACIJA — JSONBin.io (opciono, za cloud backup)
+// KONFIGURACIJA — JSONBin.io (cloud backup)
 // ============================================================
-const JSONBIN_MASTER_KEY = "$2a$10$/ud4vWXIrbZzrKaI4X29de7RuInU4xl48U0.O1TtjquKsscfMg9kC"; // <-- nalepi ključ ako želiš cloud backup
+// VAŽNO: Napravi novi Master Key na jsonbin.io (stari je kompromitovan)
+const JSONBIN_MASTER_KEY = "$2a$10$/ud4vWXIrbZzrKaI4X29de7RuInU4xl48U0.O1TtjquKsscfMg9kC"; // <-- NALEPI NOVI KLJUČ OVDE
+
+// ============================================================
+// KONFIGURACIJA — Telegram dnevni backup
+// ============================================================
+// VAŽNO: Uradi /revoke kod @BotFather i uzmi NOVI token
+const TELEGRAM_BOT_TOKEN = "8857447486:AAF7RMw0WeAXx_6eXOKlbPm4xgQXt3g0Rk8"; // <-- NALEPI NOVI TOKEN OVDE
+const TELEGRAM_CHAT_ID = "1740770878"; // <-- tvoj chat ID (ovaj je OK)
+const TELEGRAM_LAST_KEY = "nokti_telegram_last_backup";
 
 // ============================================================
 // STORAGE
@@ -105,7 +114,7 @@ function seedEmptyState() {
 }
 
 // ============================================================
-// CLOUD BACKUP
+// CLOUD BACKUP (JSONBin)
 // ============================================================
 function scheduleBackup() {
   if (!JSONBIN_MASTER_KEY) return;
@@ -154,15 +163,11 @@ async function restoreFromCloud() {
   if (!res.ok) throw new Error("HTTP " + res.status);
   const data = await res.json();
   return reviveState(data.record);
+}
 
-
-  // ============================================================
+// ============================================================
 // TELEGRAM DNEVNI BACKUP
 // ============================================================
-const TELEGRAM_BOT_TOKEN = "8857447486:AAF7RMw0WeAXx_6eXOKlbPm4xgQXt3g0Rk8"; // <-- nalepi token ovde
-const TELEGRAM_CHAT_ID = "1740770878";   // <-- nalepi chat ID ovde
-const TELEGRAM_LAST_KEY = "nokti_telegram_last_backup";
-
 async function sendTelegramBackup(force = false) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return false;
   if (!state) return false;
@@ -226,7 +231,6 @@ document.addEventListener("visibilitychange", () => {
     setTimeout(() => sendTelegramBackup(), 2000);
   }
 });
-}
 
 // ============================================================
 // HELPERS
@@ -930,7 +934,6 @@ function renderServicePicker() {
   return html;
 }
 
-// --- Kalendar navigacija ---
 function calendarPrevMonth() {
   const m = newApptState.displayedMonth;
   newApptState.displayedMonth = new Date(m.getFullYear(), m.getMonth() - 1, 1);
