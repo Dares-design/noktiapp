@@ -154,6 +154,78 @@ async function restoreFromCloud() {
   if (!res.ok) throw new Error("HTTP " + res.status);
   const data = await res.json();
   return reviveState(data.record);
+
+
+  // ============================================================
+// TELEGRAM DNEVNI BACKUP
+// ============================================================
+const TELEGRAM_BOT_TOKEN = "8857447486:AAF7RMw0WeAXx_6eXOKlbPm4xgQXt3g0Rk8"; // <-- nalepi token ovde
+const TELEGRAM_CHAT_ID = "1740770878";   // <-- nalepi chat ID ovde
+const TELEGRAM_LAST_KEY = "nokti_telegram_last_backup";
+
+async function sendTelegramBackup(force = false) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return false;
+  if (!state) return false;
+
+  // Provera — je li prošlo 20h od zadnjeg backup-a
+  if (!force) {
+    const lastStr = localStorage.getItem(TELEGRAM_LAST_KEY);
+    if (lastStr) {
+      const last = new Date(lastStr);
+      const hoursSince = (Date.now() - last.getTime()) / 3600000;
+      if (hoursSince < 20) return false;
+    }
+  }
+
+  try {
+    const json = JSON.stringify(state, null, 2);
+    const date = new Date();
+    const dateStr = `${String(date.getDate()).padStart(2,"0")}.${String(date.getMonth()+1).padStart(2,"0")}.${date.getFullYear()}`;
+    const timeStr = `${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`;
+    const filename = `nokti-backup-${date.toISOString().slice(0,10)}.json`;
+
+    const formData = new FormData();
+    formData.append("chat_id", TELEGRAM_CHAT_ID);
+    formData.append("document", new Blob([json], { type: "application/json" }), filename);
+    formData.append("caption",
+      `📦 Nokti dnevni backup\n` +
+      `📅 ${dateStr} u ${timeStr}\n\n` +
+      `👥 Klijentkinje: ${state.clients.length}\n` +
+      `📆 Termini: ${state.appointments.length}\n` +
+      `💰 Završeno: ${state.appointments.filter(a => a.status === "completed").length}`
+    );
+
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, {
+      method: "POST",
+      body: formData
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error("HTTP " + res.status + ": " + errText);
+    }
+
+    localStorage.setItem(TELEGRAM_LAST_KEY, new Date().toISOString());
+    console.log("[Telegram] Dnevni backup poslan");
+    return true;
+  } catch (e) {
+    console.warn("[Telegram] Backup failed:", e.message);
+    return false;
+  }
+}
+
+// Pokreni backup pri otvaranju aplikacije (posle 5s)
+setTimeout(() => sendTelegramBackup(), 5000);
+
+// I svakih 30 min dok je aplikacija otvorena
+setInterval(() => sendTelegramBackup(), 30 * 60 * 1000);
+
+// Kada aplikacija dođe u fokus (npr. Jelena je otvori uveče)
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    setTimeout(() => sendTelegramBackup(), 2000);
+  }
+});
 }
 
 // ============================================================
