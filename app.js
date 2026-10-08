@@ -1,15 +1,13 @@
 // ============================================================
 // KONFIGURACIJA — JSONBin.io (cloud backup)
 // ============================================================
-// VAŽNO: Napravi novi Master Key na jsonbin.io (stari je kompromitovan)
-const JSONBIN_MASTER_KEY = "$2a$10$/ud4vWXIrbZzrKaI4X29de7RuInU4xl48U0.O1TtjquKsscfMg9kC"; // <-- NALEPI NOVI KLJUČ OVDE
+const JSONBIN_MASTER_KEY = "$2a$10$/ud4vWXIrbZzrKaI4X29de7RuInU4xl48U0.O1TtjquKsscfMg9kC"; // <-- NALEPI SVOJ KLJUČ
 
 // ============================================================
 // KONFIGURACIJA — Telegram dnevni backup
 // ============================================================
-// VAŽNO: Uradi /revoke kod @BotFather i uzmi NOVI token
-const TELEGRAM_BOT_TOKEN = "8857447486:AAF7RMw0WeAXx_6eXOKlbPm4xgQXt3g0Rk8"; // <-- NALEPI NOVI TOKEN OVDE
-const TELEGRAM_CHAT_ID = "1740770878"; // <-- tvoj chat ID (ovaj je OK)
+const TELEGRAM_BOT_TOKEN = "8857447486:AAF7RMw0WeAXx_6eXOKlbPm4xgQXt3g0Rk8"; // <-- NALEPI SVOJ TOKEN
+const TELEGRAM_CHAT_ID = "1740770878";
 const TELEGRAM_LAST_KEY = "nokti_telegram_last_backup";
 
 // ============================================================
@@ -172,7 +170,6 @@ async function sendTelegramBackup(force = false) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return false;
   if (!state) return false;
 
-  // Provera — je li prošlo 20h od zadnjeg backup-a
   if (!force) {
     const lastStr = localStorage.getItem(TELEGRAM_LAST_KEY);
     if (lastStr) {
@@ -219,13 +216,8 @@ async function sendTelegramBackup(force = false) {
   }
 }
 
-// Pokreni backup pri otvaranju aplikacije (posle 5s)
 setTimeout(() => sendTelegramBackup(), 5000);
-
-// I svakih 30 min dok je aplikacija otvorena
 setInterval(() => sendTelegramBackup(), 30 * 60 * 1000);
-
-// Kada aplikacija dođe u fokus (npr. Jelena je otvori uveče)
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     setTimeout(() => sendTelegramBackup(), 2000);
@@ -295,6 +287,19 @@ function nextAppointmentFor(clientId) {
 }
 function lastCompletedFor(clientId) {
   return state.appointments.filter(a=>a.clientId===clientId && a.status==="completed").sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+}
+
+// Detektuje "Slobodan Termin" i slično
+function isFakeAppointment(apt) {
+  if (!apt) return false;
+  const client = clientById(apt.clientId);
+  if (!client) return false;
+  const fullName = `${client.firstName} ${client.lastName}`.toLowerCase().trim();
+  return fullName.includes("slobodan")
+      || fullName.includes("slobodno")
+      || fullName.includes("blokirano")
+      || fullName.includes("zauzeto")
+      || fullName.includes("blocked");
 }
 
 // ============================================================
@@ -450,6 +455,19 @@ function renderAppointmentCard(apt) {
   const timeClass = apt.status === "completed" ? "appointment-time completed-time" : "appointment-time";
   let badge = "";
   if (isAwaitingPayment(apt)) badge = `<div class="appointment-badge">Čeka naplatu</div>`;
+
+  // Specijalni prikaz za "Slobodan Termin"
+  if (isFakeAppointment(apt)) {
+    card.innerHTML = `
+      <div class="appointment-row-1">
+        <span class="appointment-time">${formatTime(d)}</span>
+      </div>
+      <div class="appointment-name">— Slobodan termin —</div>
+      <div class="appointment-services">Slobodno za zakazivanje</div>`;
+    card.style.opacity = "0.75";
+    card.onclick = () => openAppointmentDetail(apt.id);
+    return card;
+  }
 
   card.innerHTML = `
     <div class="appointment-row-1">
@@ -730,13 +748,16 @@ function updateSettingsSub() {
 function updateBackupStatus() { updateSettingsSub(); }
 
 // ============================================================
-// NOVI TERMIN — tok: kalendar → vreme → klijent → usluge
+// NOVI / IZMENI TERMIN
 // ============================================================
 let newApptState = null;
 
 function openNewAppointmentSheet(preselectClientId) {
   const baseDate = state.selectedDate ? startOfDay(state.selectedDate) : startOfDay(new Date());
   newApptState = {
+    mode: "new",
+    editingId: null,
+    replacesFakeId: null,
     step: "calendar",
     date: null,
     displayedMonth: new Date(baseDate.getFullYear(), baseDate.getMonth(), 1),
@@ -748,11 +769,37 @@ function openNewAppointmentSheet(preselectClientId) {
   renderNewAppointmentSheet();
 }
 
+function openEditAppointment(appointmentId) {
+  const apt = state.appointments.find(a => a.id === appointmentId);
+  if (!apt) return;
+  if (apt.status !== "scheduled") {
+    toast("Ne može da se menja završen ili otkazan termin");
+    return;
+  }
+
+  const d = new Date(apt.date);
+  newApptState = {
+    mode: "edit",
+    editingId: appointmentId,
+    replacesFakeId: null,
+    step: "time",
+    date: startOfDay(d),
+    displayedMonth: new Date(d.getFullYear(), d.getMonth(), 1),
+    time: minutesFromDate(d),
+    clientId: apt.clientId,
+    services: apt.services.map(s => ({ ...s })),
+    fromProfile: false
+  };
+  closeSheet();
+  setTimeout(() => renderNewAppointmentSheet(), 300);
+}
+
 function renderNewAppointmentSheet() {
   const s = newApptState;
+  const isEdit = s.mode === "edit";
   let html = `<div class="sheet-grabber"></div>
     <div class="sheet-header">
-      <div class="sheet-title">Novi termin</div>
+      <div class="sheet-title">${isEdit ? "Izmeni termin" : "Novi termin"}</div>
       <button class="sheet-close" onclick="closeSheet()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -802,7 +849,7 @@ function renderNewAppointmentSheet() {
         <div class="sheet-total-label">Ukupno</div>
         <div class="sheet-total-value">${formatMoney(total)}</div>
       </div>
-      <button class="btn btn-primary" onclick="newApptConfirm()">Zakaži termin</button>`;
+      <button class="btn btn-primary" onclick="newApptConfirm()">${isEdit ? "Sačuvaj izmene" : "Zakaži termin"}</button>`;
     }
   }
 
@@ -877,20 +924,64 @@ function renderTimeGrid() {
   const start = state.settings.workStart * 60;
   const end = state.settings.workEnd * 60;
 
+  // Svi zakazani termini za taj dan
+  const dayAppts = state.appointments.filter(a => {
+    if (a.status !== "scheduled") return false;
+    return sameDay(new Date(a.date), s.date);
+  });
+
+  // "Slobodan Termin" sati (Jelenini radni sati)
+  const fakeSlots = dayAppts
+    .filter(a => isFakeAppointment(a))
+    .map(a => minutesFromDate(new Date(a.date)));
+
+  // Pravi termini (zauzeti sati)
+  const realSlots = dayAppts
+    .filter(a => !isFakeAppointment(a))
+    .map(a => minutesFromDate(new Date(a.date)));
+
+  // Logika: ako dan ima bar jedan "Slobodan Termin" → samo ti sati su radni
+  // Ako nema → svi sati su radni (default ponašanje)
+  const hasFakeSlots = fakeSlots.length > 0;
+  const workingSlots = hasFakeSlots
+    ? new Set([...fakeSlots, ...realSlots])
+    : null;
+
+  const isWorking = (m) => workingSlots === null || workingSlots.has(m);
+
+  // Provera da li ima ijedan slobodan radni sat
   let hasFree = false;
   for (let m = start; m < end; m += 30) {
-    if (!isSlotBusy(s.date, m)) { hasFree = true; break; }
+    if (isWorking(m) && !isSlotBusy(s.date, m)) { hasFree = true; break; }
   }
 
   if (!hasFree) {
-    return `<div class="time-empty">Svi termini su zauzeti za ovaj dan.</div>`;
+    return `<div class="time-empty">Nema slobodnih sati za ovaj dan.</div>`;
   }
 
-  let html = `<div class="time-grid">`;
+  // Hint iznad grid-a (samo ako dan ima definisane radne sate)
+  let html = "";
+  if (hasFakeSlots) {
+    const sorted = [...workingSlots].sort((a,b) => a-b);
+    const times = sorted.map(m => formatMinutes(m)).join(", ");
+    html += `<div style="font-size:13px; color:var(--success); margin-bottom:10px; padding-left:4px; font-weight:600;">
+      Radiš: ${times}
+    </div>`;
+  }
+
+  html += `<div class="time-grid">`;
   for (let m = start; m < end; m += 30) {
+    const working = isWorking(m);
     const busy = isSlotBusy(s.date, m);
     const sel = s.time === m;
-    html += `<button class="time-chip ${busy ? "busy" : ""} ${sel ? "selected" : ""}" onclick="newApptPickTime(${m})">${formatMinutes(m)}</button>`;
+
+    if (!working) {
+      html += `<button class="time-chip off" disabled>${formatMinutes(m)}</button>`;
+    } else if (busy) {
+      html += `<button class="time-chip busy" disabled>${formatMinutes(m)}</button>`;
+    } else {
+      html += `<button class="time-chip ${sel ? "selected" : ""}" onclick="newApptPickTime(${m})">${formatMinutes(m)}</button>`;
+    }
   }
   html += `</div>`;
   return html;
@@ -950,22 +1041,33 @@ function calendarPickDay(ts) {
   const s = newApptState;
   const day = startOfDay(new Date(ts));
   s.date = day;
-  s.time = null;
-  s.services = [];
-  if (!s.fromProfile) s.clientId = null;
+  if (s.mode !== "edit") {
+    s.time = null;
+    s.services = [];
+    if (!s.fromProfile) s.clientId = null;
+  }
   s.step = "time";
   renderNewAppointmentSheet();
 }
 
 function newApptPickTime(m) {
   const s = newApptState;
+
+  // Ako je ovaj sat "Slobodan Termin" — zapamti da ga treba zameniti
+  const fakeAtThisTime = state.appointments.find(a => {
+    if (a.status !== "scheduled") return false;
+    if (!isFakeAppointment(a)) return false;
+    return sameDay(new Date(a.date), s.date) && minutesFromDate(new Date(a.date)) === m;
+  });
+  s.replacesFakeId = fakeAtThisTime ? fakeAtThisTime.id : null;
+
   if (s.time === m && (s.step === "time")) {
     s.step = s.clientId ? "services" : "client";
     renderNewAppointmentSheet();
     return;
   }
   s.time = m;
-  s.services = [];
+  if (s.mode !== "edit") s.services = [];
   s.step = s.clientId ? "services" : "client";
   renderNewAppointmentSheet();
 }
@@ -973,7 +1075,7 @@ function newApptPickTime(m) {
 function newApptPickClient(clientId) {
   const s = newApptState;
   s.clientId = clientId;
-  s.services = [];
+  if (s.mode !== "edit") s.services = [];
   s.step = "services";
   renderNewAppointmentSheet();
 }
@@ -989,20 +1091,22 @@ function newApptToggleService(id) {
 
 function newAppt_changeDate() {
   newApptState.step = "calendar";
-  newApptState.time = null;
-  newApptState.services = [];
+  if (newApptState.mode !== "edit") {
+    newApptState.time = null;
+    newApptState.services = [];
+  }
   renderNewAppointmentSheet();
 }
 
 function newAppt_changeTime() {
   newApptState.step = "time";
-  newApptState.services = [];
+  if (newApptState.mode !== "edit") newApptState.services = [];
   renderNewAppointmentSheet();
 }
 
 function newAppt_changeClient() {
   newApptState.step = "client";
-  newApptState.services = [];
+  if (newApptState.mode !== "edit") newApptState.services = [];
   renderNewAppointmentSheet();
 }
 
@@ -1012,6 +1116,9 @@ function newApptConfirm() {
 
   const conflict = state.appointments.find(a => {
     if (a.status !== "scheduled") return false;
+    if (s.mode === "edit" && a.id === s.editingId) return false;
+    if (s.replacesFakeId && a.id === s.replacesFakeId) return false;
+    if (isFakeAppointment(a)) return false; // ne blokiraj zbog "Slobodan Termin"
     const d = new Date(a.date);
     return sameDay(d, s.date) && minutesFromDate(d) === s.time;
   });
@@ -1029,6 +1136,29 @@ function commitNewAppointment() {
   const s = newApptState;
   const date = new Date(s.date);
   date.setHours(Math.floor(s.time / 60), s.time % 60, 0, 0);
+
+  // Ako menjamo "Slobodan Termin" — obriši ga
+  if (s.replacesFakeId) {
+    const idx = state.appointments.findIndex(a => a.id === s.replacesFakeId);
+    if (idx >= 0) state.appointments.splice(idx, 1);
+  }
+
+  if (s.mode === "edit" && s.editingId) {
+    const apt = state.appointments.find(a => a.id === s.editingId);
+    if (apt) {
+      apt.date = date.toISOString();
+      apt.clientId = s.clientId;
+      apt.services = s.services;
+      saveState();
+      closeSheet();
+      toast("Izmena sačuvana");
+      renderToday();
+      renderClients();
+      if (state.profileClientId) renderClientProfile();
+      return;
+    }
+  }
+
   state.appointments.push({
     id: "a" + Date.now(),
     date: date.toISOString(),
@@ -1046,8 +1176,13 @@ function commitNewAppointment() {
 
 function isSlotBusy(date, minutes) {
   if (!date) return false;
+  const editingId = newApptState?.editingId;
+  const replacesFakeId = newApptState?.replacesFakeId;
   return state.appointments.some(a => {
     if (a.status !== "scheduled") return false;
+    if (editingId && a.id === editingId) return false;
+    if (replacesFakeId && a.id === replacesFakeId) return false;
+    if (isFakeAppointment(a)) return false; // "Slobodan Termin" nije zauzet
     const d = new Date(a.date);
     return sameDay(d, date) && minutesFromDate(d) === minutes;
   });
@@ -1119,13 +1254,85 @@ function saveNewClient() {
 }
 
 // ============================================================
-// DETALJ TERMINA
+// DETALJ TERMINA (i "Slobodan Termin")
 // ============================================================
 let currentAptId = null;
 
 function openAppointmentDetail(aptId) {
   currentAptId = aptId;
+  const apt = state.appointments.find(a => a.id === aptId);
+  if (isFakeAppointment(apt)) {
+    renderFakeAppointmentSheet(apt);
+    return;
+  }
   renderAppointmentDetailSheet();
+}
+
+function renderFakeAppointmentSheet(apt) {
+  const d = new Date(apt.date);
+  const dayLabel = `${capitalize(DAYS_LONG[d.getDay()])}, ${d.getDate()}. ${MONTHS_SHORT[d.getMonth()]}`;
+
+  const html = `<div class="sheet-grabber"></div>
+    <div class="sheet-header">
+      <div class="sheet-title">Slobodan termin</div>
+      <button class="sheet-close" onclick="closeSheet()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <div class="detail-hero">
+        <div class="detail-time">${formatTime(d)}</div>
+        <div class="detail-date">${dayLabel}</div>
+      </div>
+
+      <p style="text-align:center; color:var(--text-2); font-size:15px; line-height:1.5; margin-bottom:24px;">
+        Ovaj sat je označen kao slobodan.<br>Želiš li da zakažeš klijentkinju?
+      </p>
+
+      <button class="btn btn-primary" onclick="fakeApptStartBooking('${apt.id}')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Zakaži klijentkinju
+      </button>
+      <button class="btn btn-secondary" style="margin-top:12px;" onclick="fakeApptRemove('${apt.id}')">
+        Oslobodi sat
+      </button>
+      <button class="btn btn-secondary" style="margin-top:12px; background:transparent; color:var(--text-2);" onclick="closeSheet()">
+        Zatvori
+      </button>
+    </div>`;
+  openSheet(html);
+}
+
+function fakeApptStartBooking(fakeId) {
+  const fake = state.appointments.find(a => a.id === fakeId);
+  if (!fake) return;
+  const d = new Date(fake.date);
+  closeSheet();
+
+  setTimeout(() => {
+    openNewAppointmentSheet();
+    newApptState.date = startOfDay(d);
+    newApptState.displayedMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+    newApptState.time = minutesFromDate(d);
+    newApptState.replacesFakeId = fakeId;
+    newApptState.step = "client";
+    renderNewAppointmentSheet();
+  }, 350);
+}
+
+function fakeApptRemove(fakeId) {
+  const idx = state.appointments.findIndex(a => a.id === fakeId);
+  if (idx < 0) return;
+  const backup = state.appointments[idx];
+  state.appointments.splice(idx, 1);
+  saveState();
+  closeSheet();
+  toastUndo("Sat oslobođen", () => {
+    state.appointments.push(backup);
+    saveState();
+    renderToday();
+  });
+  renderToday();
 }
 
 function renderAppointmentDetailSheet() {
@@ -1167,7 +1374,7 @@ function renderAppointmentDetailSheet() {
         Pošalji podsetnik
       </button>
       <div class="btn-row">
-        <button class="btn btn-secondary" onclick="toast('Pomeranje — u V1.1')">Pomeri</button>
+        <button class="btn btn-secondary" onclick="openEditAppointment('${apt.id}')">Izmeni</button>
         <button class="btn btn-danger" onclick="cancelAppointment()">Otkaži</button>
       </div>`;
   } else if (apt.status === "completed") {
