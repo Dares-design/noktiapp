@@ -11,17 +11,11 @@ const TELEGRAM_CHAT_ID = "1740770878";
 const TELEGRAM_LAST_KEY = "nokti_telegram_last_backup";
 
 // ============================================================
-// RADNI SATI — od 01.12.2026
+// HELPERS — radni sati
 // ============================================================
-const WORK_HOURS_START = new Date(2026, 11, 1); // 01.12.2026
-
 function dateKey(d) {
   const x = d instanceof Date ? d : new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`;
-}
-
-function usesWorkHours(date) {
-  return startOfDay(date) >= startOfDay(WORK_HOURS_START);
 }
 
 function getDaySchedule(date) {
@@ -49,7 +43,7 @@ const BIN_ID_KEY = "nokti_bin_id";
 
 if (navigator.storage?.persist) {
   navigator.storage.persist().then(granted => {
-    console.log("[Nokti] Persistent storage:", granted ? "ODOBREN" : "odbijen");
+    console.log("[Noktia] Persistent storage:", granted ? "ODOBREN" : "odbijen");
   });
 }
 
@@ -217,13 +211,13 @@ async function sendTelegramBackup(force = false) {
     const date = new Date();
     const dateStr = `${String(date.getDate()).padStart(2,"0")}.${String(date.getMonth()+1).padStart(2,"0")}.${date.getFullYear()}`;
     const timeStr = `${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`;
-    const filename = `nokti-backup-${date.toISOString().slice(0,10)}.json`;
+    const filename = `noktia-backup-${date.toISOString().slice(0,10)}.json`;
 
     const formData = new FormData();
     formData.append("chat_id", TELEGRAM_CHAT_ID);
     formData.append("document", new Blob([json], { type: "application/json" }), filename);
     formData.append("caption",
-      `📦 Nokti dnevni backup\n` +
+      `📦 Noktia dnevni backup\n` +
       `📅 ${dateStr} u ${timeStr}\n\n` +
       `👥 Klijentkinje: ${state.clients.length}\n` +
       `📆 Termini: ${state.appointments.length}\n` +
@@ -322,7 +316,6 @@ function lastCompletedFor(clientId) {
   return state.appointments.filter(a=>a.clientId===clientId && a.status==="completed").sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
 }
 
-// Detektuje "Slobodan Termin" i slično
 function isFakeAppointment(apt) {
   if (!apt) return false;
   const client = clientById(apt.clientId);
@@ -475,11 +468,11 @@ function renderToday() {
 
   backBtn.classList.toggle("hidden", isToday(d));
 
-  // "Podesi sate" — vidljivo samo za datume od 01.12.2026
+  // "Podesi sate" — uvek vidljivo za buduće dane i danas
   const oldRow = document.getElementById("day-schedule-row");
   if (oldRow) oldRow.remove();
 
-  if (usesWorkHours(d) && startOfDay(d) >= startOfDay(new Date())) {
+  if (startOfDay(d) >= startOfDay(new Date())) {
     const row = document.createElement("div");
     row.id = "day-schedule-row";
     row.style.cssText = "display:flex; justify-content:space-between; align-items:center; margin-top:-12px; margin-bottom:16px; padding-left:4px; padding-right:4px;";
@@ -511,6 +504,26 @@ function renderToday() {
       summary2.parentNode.insertBefore(row, summary2.nextSibling);
     }
   }
+
+  // Kalendar ikonica — dodaj ako ne postoji
+  ensureCalendarButton();
+}
+
+function ensureCalendarButton() {
+  let btn = document.getElementById("btn-open-calendar");
+  if (btn) return;
+  const header = document.querySelector("#screen-today .screen-header");
+  if (!header) return;
+
+  header.style.gridTemplateColumns = "44px 1fr 44px 44px";
+
+  btn = document.createElement("button");
+  btn.id = "btn-open-calendar";
+  btn.className = "icon-btn";
+  btn.setAttribute("aria-label", "Izaberi datum");
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+  btn.onclick = openDatePicker;
+  header.appendChild(btn);
 }
 
 function renderAppointmentCard(apt) {
@@ -526,7 +539,6 @@ function renderAppointmentCard(apt) {
   let badge = "";
   if (isAwaitingPayment(apt)) badge = `<div class="appointment-badge">Čeka naplatu</div>`;
 
-  // Specijalni prikaz za "Slobodan Termin"
   if (isFakeAppointment(apt)) {
     card.innerHTML = `
       <div class="appointment-row-1">
@@ -549,6 +561,107 @@ function renderAppointmentCard(apt) {
     ${badge}`;
   card.onclick = () => openAppointmentDetail(apt.id);
   return card;
+}
+
+// ============================================================
+// DATE PICKER (kalendar ikonica)
+// ============================================================
+let pickerMonth = null;
+
+function openDatePicker() {
+  const d = state.selectedDate || new Date();
+  pickerMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+  renderDatePicker();
+}
+
+function renderDatePicker() {
+  const m = pickerMonth;
+  const year = m.getFullYear();
+  const month = m.getMonth();
+
+  let html = `<div class="sheet-grabber"></div>
+    <div class="sheet-header">
+      <div class="sheet-title">Izaberi datum</div>
+      <button class="sheet-close" onclick="closeSheet()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">`;
+
+  html += `<div class="calendar">
+    <div class="calendar-header">
+      <button class="calendar-nav" onclick="pickerPrevMonth()" aria-label="Prethodni mesec">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <div class="calendar-title">${MONTHS[month]} ${year}</div>
+      <button class="calendar-nav" onclick="pickerNextMonth()" aria-label="Sledeći mesec">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+    <div class="calendar-weekdays">
+      <span class="calendar-weekday">Pon</span>
+      <span class="calendar-weekday">Uto</span>
+      <span class="calendar-weekday">Sre</span>
+      <span class="calendar-weekday">Čet</span>
+      <span class="calendar-weekday">Pet</span>
+      <span class="calendar-weekday">Sub</span>
+      <span class="calendar-weekday">Ned</span>
+    </div>
+    <div class="calendar-grid">`;
+
+  const firstOfMonth = new Date(year, month, 1);
+  const firstDow = firstOfMonth.getDay();
+  const diffToMonday = firstDow === 0 ? -6 : 1 - firstDow;
+  const startDate = addDays(firstOfMonth, diffToMonday);
+
+  for (let i = 0; i < 42; i++) {
+    const day = addDays(startDate, i);
+    const inMonth = day.getMonth() === month;
+    const isSelected = sameDay(day, state.selectedDate);
+    const isTodayCell = sameDay(day, new Date());
+    const hasAppts = dayHasAppointments(day);
+
+    let cls = "calendar-day";
+    if (!inMonth) cls += " other-month";
+    if (isSelected) cls += " selected";
+    if (isTodayCell && !isSelected) cls += " today";
+    if (hasAppts) cls += " has-appts";
+
+    html += `<button class="${cls}" onclick="pickerPickDay(${day.getTime()})">
+      <span>${day.getDate()}</span>
+    </button>`;
+  }
+
+  html += `</div></div>`;
+
+  html += `<button class="btn btn-secondary" style="margin-top:20px;" onclick="pickerGoToday()">Idi na danas</button>`;
+
+  html += `</div>`;
+  openSheet(html);
+}
+
+function pickerPrevMonth() {
+  pickerMonth = new Date(pickerMonth.getFullYear(), pickerMonth.getMonth() - 1, 1);
+  renderDatePicker();
+}
+
+function pickerNextMonth() {
+  pickerMonth = new Date(pickerMonth.getFullYear(), pickerMonth.getMonth() + 1, 1);
+  renderDatePicker();
+}
+
+function pickerPickDay(ts) {
+  state.selectedDate = startOfDay(new Date(ts));
+  saveState();
+  closeSheet();
+  renderToday();
+}
+
+function pickerGoToday() {
+  state.selectedDate = startOfDay(new Date());
+  saveState();
+  closeSheet();
+  renderToday();
 }
 
 // ============================================================
@@ -1005,20 +1118,14 @@ function renderTimeGrid() {
   let workingSlots = null;
   let hasSchedule = false;
 
-  if (usesWorkHours(s.date)) {
-    // NOVI SISTEM — od 01.12.2026
-    const schedule = getDaySchedule(s.date);
-    if (Array.isArray(schedule)) {
-      workingSlots = new Set(schedule);
-      hasSchedule = true;
-    } else if (schedule === "off") {
-      return `<div class="time-empty">Ne radiš ovaj dan.</div>`;
-    } else {
-      workingSlots = null;
-      hasSchedule = false;
-    }
+  const schedule = getDaySchedule(s.date);
+
+  if (Array.isArray(schedule)) {
+    workingSlots = new Set(schedule);
+    hasSchedule = true;
+  } else if (schedule === "off") {
+    return `<div class="time-empty">Ne radiš ovaj dan.</div>`;
   } else {
-    // STARI SISTEM — pre 01.12.2026 (Slobodan Termin)
     const dayAppts = state.appointments.filter(a => {
       if (a.status !== "scheduled") return false;
       return sameDay(new Date(a.date), s.date);
@@ -1029,8 +1136,7 @@ function renderTimeGrid() {
     const realSlots = dayAppts
       .filter(a => !isFakeAppointment(a))
       .map(a => minutesFromDate(new Date(a.date)));
-    const hasFakeSlots = fakeSlots.length > 0;
-    if (hasFakeSlots) {
+    if (fakeSlots.length > 0) {
       workingSlots = new Set([...fakeSlots, ...realSlots]);
       hasSchedule = true;
     }
@@ -1053,11 +1159,9 @@ function renderTimeGrid() {
     </div>`;
   }
 
-  if (usesWorkHours(s.date)) {
-    html += `<div style="text-align:right; margin-bottom:10px;">
-      <button style="font-size:13px; font-weight:700; color:var(--info); padding:4px 8px;" onclick="editDayScheduleFromCurrent()">Podesi sate</button>
-    </div>`;
-  }
+  html += `<div style="text-align:right; margin-bottom:10px;">
+    <button style="font-size:13px; font-weight:700; color:var(--info); padding:4px 8px;" onclick="editDayScheduleFromCurrent()">Podesi sate</button>
+  </div>`;
 
   if (!hasFree) {
     html += `<div class="time-empty">Nema slobodnih sati za ovaj dan.</div>`;
@@ -1083,7 +1187,7 @@ function renderTimeGrid() {
 }
 
 // ============================================================
-// NOVI STEPOVI — radni sati od 01.12.2026
+// STEPOVI — radni sati
 // ============================================================
 function renderAskScheduleStep() {
   const s = newApptState;
@@ -1147,11 +1251,28 @@ function schedulePickAll() {
 
 function schedulePickSome() {
   const s = newApptState;
-  s.pickedHours = [];
-  const existing = getDaySchedule(s.date);
-  if (Array.isArray(existing)) s.pickedHours = [...existing];
+  s.pickedHours = preloadPickedHours(s.date);
   s.step = "pick-hours";
   renderNewAppointmentSheet();
+}
+
+function preloadPickedHours(date) {
+  const schedule = getDaySchedule(date);
+  if (Array.isArray(schedule)) return [...schedule];
+  if (schedule === "all") {
+    const start = state.settings.workStart * 60;
+    const end = state.settings.workEnd * 60;
+    const hours = [];
+    for (let m = start; m < end; m += 30) hours.push(m);
+    return hours;
+  }
+  // Fallback — preuzmi iz "Slobodan Termin"
+  const fakeSlots = state.appointments
+    .filter(a => a.status === "scheduled" &&
+                 isFakeAppointment(a) &&
+                 sameDay(new Date(a.date), date))
+    .map(a => minutesFromDate(new Date(a.date)));
+  return fakeSlots;
 }
 
 function schedulePickOff() {
@@ -1196,39 +1317,17 @@ function dayOffChange() {
 
 function editDayScheduleFromCurrent() {
   const s = newApptState;
-  const existing = getDaySchedule(s.date);
-  if (Array.isArray(existing)) {
-    s.pickedHours = [...existing];
-  } else if (existing === "all" || existing === null) {
-    const start = state.settings.workStart * 60;
-    const end = state.settings.workEnd * 60;
-    s.pickedHours = [];
-    for (let m = start; m < end; m += 30) s.pickedHours.push(m);
-  } else {
-    s.pickedHours = [];
-  }
+  s.pickedHours = preloadPickedHours(s.date);
   s.step = "pick-hours";
   renderNewAppointmentSheet();
 }
 
 function editDayScheduleFromDanas() {
   const d = state.selectedDate;
-  if (!usesWorkHours(d)) {
-    toast("Ova funkcija radi od 01.12.2026");
-    return;
-  }
   openNewAppointmentSheet();
   newApptState.date = startOfDay(d);
   newApptState.displayedMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-  const existing = getDaySchedule(d);
-  if (Array.isArray(existing)) {
-    newApptState.pickedHours = [...existing];
-  } else {
-    const start = state.settings.workStart * 60;
-    const end = state.settings.workEnd * 60;
-    newApptState.pickedHours = [];
-    for (let m = start; m < end; m += 30) newApptState.pickedHours.push(m);
-  }
+  newApptState.pickedHours = preloadPickedHours(d);
   newApptState.step = "pick-hours";
   renderNewAppointmentSheet();
 }
@@ -1293,16 +1392,17 @@ function calendarPickDay(ts) {
     if (!s.fromProfile) s.clientId = null;
   }
 
-  // Od 01.12.2026 → pita za radne sate ako nisu podešeni
-  if (usesWorkHours(day)) {
-    const schedule = getDaySchedule(day);
-    if (schedule === null) {
-      s.step = "ask-schedule";
-    } else if (schedule === "off") {
-      s.step = "day-off";
-    } else {
-      s.step = "time";
-    }
+  const schedule = getDaySchedule(day);
+  const hasFakes = state.appointments.some(a =>
+    a.status === "scheduled" &&
+    isFakeAppointment(a) &&
+    sameDay(new Date(a.date), day)
+  );
+
+  if (schedule === null && !hasFakes) {
+    s.step = "ask-schedule";
+  } else if (schedule === "off") {
+    s.step = "day-off";
   } else {
     s.step = "time";
   }
@@ -1312,7 +1412,6 @@ function calendarPickDay(ts) {
 function newApptPickTime(m) {
   const s = newApptState;
 
-  // Ako je ovaj sat "Slobodan Termin" — zapamti da ga treba zameniti
   const fakeAtThisTime = state.appointments.find(a => {
     if (a.status !== "scheduled") return false;
     if (!isFakeAppointment(a)) return false;
@@ -2069,7 +2168,7 @@ function exportData() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `nokti-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `noktia-backup-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
   toast("Kopija sačuvana");
