@@ -362,11 +362,13 @@ function toastUndo(msg, undoFn) {
 }
 
 // ============================================================
-// SHEET SYSTEM
+// SHEET SYSTEM — SA POPRAVLJENIM BUG-OM (sheetVersion)
 // ============================================================
 let activeSheet = null;
+let sheetVersion = 0;
 
 function openSheet(html) {
+  sheetVersion++;
   const container = document.getElementById("sheet-container");
   const overlay = document.getElementById("sheet-overlay");
   container.innerHTML = `<div class="sheet">${html}</div>`;
@@ -377,9 +379,15 @@ function openSheet(html) {
 function closeSheet() {
   const container = document.getElementById("sheet-container");
   const overlay = document.getElementById("sheet-overlay");
+  const myVersion = sheetVersion;
   overlay.classList.remove("visible");
   container.classList.remove("visible");
-  setTimeout(()=>{ container.innerHTML=""; activeSheet=null; }, 400);
+  setTimeout(()=>{
+    if (sheetVersion === myVersion) {
+      container.innerHTML = "";
+      activeSheet = null;
+    }
+  }, 400);
 }
 
 // ============================================================
@@ -468,7 +476,7 @@ function renderToday() {
 
   backBtn.classList.toggle("hidden", isToday(d));
 
-  // "Podesi sate" — uvek vidljivo za buduće dane i danas
+  // "Podesi sate" — vidljivo za buduće dane i danas
   const oldRow = document.getElementById("day-schedule-row");
   if (oldRow) oldRow.remove();
 
@@ -934,9 +942,11 @@ function updateBackupStatus() { updateSettingsSub(); }
 // NOVI / IZMENI TERMIN
 // ============================================================
 let newApptState = null;
+let newApptClientSearch = "";
 
 function openNewAppointmentSheet(preselectClientId) {
   const baseDate = state.selectedDate ? startOfDay(state.selectedDate) : startOfDay(new Date());
+  newApptClientSearch = "";
   newApptState = {
     mode: "new",
     editingId: null,
@@ -962,6 +972,7 @@ function openEditAppointment(appointmentId) {
   }
 
   const d = new Date(apt.date);
+  newApptClientSearch = "";
   newApptState = {
     mode: "edit",
     editingId: appointmentId,
@@ -976,7 +987,7 @@ function openEditAppointment(appointmentId) {
     fromProfile: false
   };
   closeSheet();
-  setTimeout(() => renderNewAppointmentSheet(), 300);
+  setTimeout(() => renderNewAppointmentSheet(), 500);
 }
 
 function renderNewAppointmentSheet() {
@@ -1266,7 +1277,6 @@ function preloadPickedHours(date) {
     for (let m = start; m < end; m += 30) hours.push(m);
     return hours;
   }
-  // Fallback — preuzmi iz "Slobodan Termin"
   const fakeSlots = state.appointments
     .filter(a => a.status === "scheduled" &&
                  isFakeAppointment(a) &&
@@ -1332,28 +1342,90 @@ function editDayScheduleFromDanas() {
   renderNewAppointmentSheet();
 }
 
+// ============================================================
+// CLIENT PICKER — SA SEARCH FUNKCIJOM
+// ============================================================
 function renderClientPicker() {
   const s = newApptState;
-  let html = `<div class="chip-grid">`;
+  const q = newApptClientSearch.toLowerCase().trim();
 
-  const sortedClients = state.clients
-    .filter(c => !c.isArchived)
-    .sort((a, b) => {
-      const aLast = lastCompletedFor(a.id);
-      const bLast = lastCompletedFor(b.id);
-      if (aLast && bLast) return new Date(bLast.date) - new Date(aLast.date);
-      if (aLast) return -1;
-      if (bLast) return 1;
-      return a.firstName.localeCompare(b.firstName, "sr");
+  const allClients = state.clients.filter(c => !c.isArchived);
+
+  let displayClients;
+  if (q) {
+    displayClients = allClients.filter(c =>
+      (c.firstName + " " + c.lastName).toLowerCase().includes(q)
+    );
+  } else {
+    displayClients = allClients
+      .sort((a, b) => {
+        const aLast = lastCompletedFor(a.id);
+        const bLast = lastCompletedFor(b.id);
+        if (aLast && bLast) return new Date(bLast.date) - new Date(aLast.date);
+        if (aLast) return -1;
+        if (bLast) return 1;
+        return a.firstName.localeCompare(b.firstName, "sr");
+      })
+      .slice(0, 12);
+  }
+
+  let html = "";
+
+  // Search input
+  html += `<div style="position:relative; margin-bottom:12px;">
+    <svg style="position:absolute; left:14px; top:50%; transform:translateY(-50%); width:18px; height:18px; color:var(--text-3); pointer-events:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input
+      type="text"
+      id="client-picker-search"
+      placeholder="Pretraži klijentkinje..."
+      value="${q}"
+      oninput="onClientSearchInput(this.value)"
+      autocomplete="off"
+      style="width:100%; padding:12px 16px 12px 42px; background:var(--surface-2); border-radius:12px; font-size:16px; border:none; outline:none; color:inherit;"
+    >
+  </div>`;
+
+  // Grid klijenata
+  if (displayClients.length > 0) {
+    html += `<div class="chip-grid">`;
+    displayClients.forEach(c => {
+      const sel = c.id === s.clientId;
+      html += `<button class="chip ${sel ? "selected" : ""}" onclick="newApptPickClient('${c.id}')">${c.firstName} ${c.lastName}</button>`;
     });
+    html += `</div>`;
+  } else if (q) {
+    html += `<div style="text-align:center; padding:20px 10px; color:var(--text-2); font-size:14px;">
+      Nema rezultata za „${q}"
+    </div>`;
+  } else {
+    html += `<div style="text-align:center; padding:20px 10px; color:var(--text-2); font-size:14px;">
+      Nemaš još klijentkinja.
+    </div>`;
+  }
 
-  sortedClients.slice(0, 12).forEach(c => {
-    const sel = c.id === s.clientId;
-    html += `<button class="chip ${sel ? "selected" : ""}" onclick="newApptPickClient('${c.id}')">${c.firstName} ${c.lastName}</button>`;
-  });
-  html += `<button class="chip add-chip" onclick="openNewClientSheet(true)">+ Nova</button>`;
-  html += `</div>`;
+  // "+ Nova klijentkinja"
+  html += `<div style="margin-top:14px;">
+    <button class="btn btn-secondary" onclick="openNewClientSheet(true)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Nova klijentkinja
+    </button>
+  </div>`;
+
   return html;
+}
+
+function onClientSearchInput(value) {
+  newApptClientSearch = value;
+  renderNewAppointmentSheet();
+
+  requestAnimationFrame(() => {
+    const input = document.getElementById("client-picker-search");
+    if (input) {
+      input.focus();
+      const len = input.value.length;
+      input.setSelectionRange(len, len);
+    }
+  });
 }
 
 function renderServicePicker() {
@@ -1465,6 +1537,7 @@ function newAppt_changeTime() {
 function newAppt_changeClient() {
   newApptState.step = "client";
   if (newApptState.mode !== "edit") newApptState.services = [];
+  newApptClientSearch = "";
   renderNewAppointmentSheet();
 }
 
@@ -1602,6 +1675,7 @@ function saveNewClient() {
     newApptState.clientId = client.id;
     newApptState.services = [];
     newApptState.step = "services";
+    newApptClientSearch = "";
     renderNewAppointmentSheet();
   } else {
     closeSheet();
@@ -1674,7 +1748,7 @@ function fakeApptStartBooking(fakeId) {
     newApptState.replacesFakeId = fakeId;
     newApptState.step = "client";
     renderNewAppointmentSheet();
-  }, 350);
+  }, 500);
 }
 
 function fakeApptRemove(fakeId) {
@@ -1848,7 +1922,7 @@ function completeWithPayment(paymentStatus) {
   apt.paymentStatus = paymentStatus;
   saveState();
   closeSheet();
-  setTimeout(()=>openNextAppointmentPrompt(apt), 450);
+  setTimeout(()=>openNextAppointmentPrompt(apt), 500);
 }
 
 function markAsPaid() {
