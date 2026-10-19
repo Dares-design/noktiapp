@@ -2301,6 +2301,7 @@ document.getElementById("btn-add-service").onclick = () => openNewServiceSheet()
 document.getElementById("settings-work-hours").onclick = openWorkHoursSheet;
 document.getElementById("settings-backup").onclick = openBackupSheet;
 document.getElementById("settings-export").onclick = exportData;
+document.getElementById("settings-export-slots").onclick = openExportSlotsSheet;
 document.getElementById("settings-import").onclick = importData;
 document.getElementById("settings-reset").onclick = resetData;
 document.getElementById("file-input").onchange = handleFileImport;
