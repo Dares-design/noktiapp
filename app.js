@@ -2301,7 +2301,6 @@ document.getElementById("btn-add-service").onclick = () => openNewServiceSheet()
 document.getElementById("settings-work-hours").onclick = openWorkHoursSheet;
 document.getElementById("settings-backup").onclick = openBackupSheet;
 document.getElementById("settings-export").onclick = exportData;
-document.getElementById("settings-export-slots").onclick = openExportSlotsSheet;
 document.getElementById("settings-import").onclick = importData;
 document.getElementById("settings-reset").onclick = resetData;
 document.getElementById("file-input").onchange = handleFileImport;
@@ -2338,81 +2337,125 @@ document.getElementById("file-input").onchange = handleFileImport;
 // IZVOZ SLOBODNIH TERMINA (za Instagram)
 // ============================================================
 function openExportSlotsSheet() {
-  const d = state.selectedDate || new Date();
-  const month = d.getMonth();
-  const year = d.getFullYear();
-  
-  let text = "";
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const today = startOfDay(new Date());
-
-  for (let day = 1; day <= daysInMonth; day++) {
-    const date = new Date(year, month, day);
-    
-    // Preskoči dane koji su prošli
-    if (startOfDay(date) < today) continue;
-
-    // 1. Uzmi radne sate (iz Podesi sate ili Slobodan Termin)
-    let workingSlots = [];
-    const schedule = getDaySchedule(date);
-    
-    if (schedule === "off") {
-      workingSlots = [];
-    } else if (Array.isArray(schedule)) {
-      workingSlots = schedule;
-    } else {
-      const fakeAppts = state.appointments.filter(a => a.status === "scheduled" && isFakeAppointment(a) && sameDay(new Date(a.date), date));
-      if (fakeAppts.length > 0) {
-        workingSlots = fakeAppts.map(a => minutesFromDate(new Date(a.date)));
-      } else {
-        const start = state.settings.workStart * 60;
-        const end = state.settings.workEnd * 60;
-        for (let m = start; m < end; m += 30) workingSlots.push(m);
-      }
-    }
-
-    // 2. Uzmi zauzete sate (samo prave klijentkinje)
-    const booked = state.appointments
-      .filter(a => a.status === "scheduled" && !isFakeAppointment(a) && sameDay(new Date(a.date), date))
-      .map(a => minutesFromDate(new Date(a.date)));
-
-    // 3. Filtriraj samo slobodne
-    const available = workingSlots.filter(m => !booked.includes(m));
-
-    if (available.length > 0) {
-      available.sort((a,b) => a-b);
-      
-      const formattedSlots = available.map(m => {
-        const h = Math.floor(m / 60);
-        const min = m % 60;
-        return min === 0 ? String(h).padStart(2,"0") : `${String(h).padStart(2,"0")}:${String(min).padStart(2,"0")}`;
-      }).join(",");
-
-      const dayStr = String(day).padStart(2, "0");
-      const monthStr = String(month + 1).padStart(2, "0");
-      text += `${dayStr}.${monthStr}–${formattedSlots}\n`;
-    }
-  }
-
-  if (text === "") {
-    text = "Nema slobodnih termina u ovom mesecu.";
-  }
+  // Uzmi današnji datum kao početni, a kraj meseca kao krajnji
+  const today = new Date();
+  const startStr = dateKey(today);
+  const endStr = dateKey(new Date(today.getFullYear(), today.getMonth() + 1, 0));
 
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header">
-      <div class="sheet-title">Slobodni termini</div>
+      <div class="sheet-title">Izvezi slobodne termine</div>
+      <button class="sheet-close" onclick="closeSheet()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <div class="field-row" style="margin-bottom: 20px;">
+        <div class="field">
+          <label class="field-label">Od datuma</label>
+          <input type="date" class="field-input" id="export-start" value="${startStr}">
+        </div>
+        <div class="field">
+          <label class="field-label">Do datuma</label>
+          <input type="date" class="field-input" id="export-end" value="${endStr}">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="generateSlotsText()">Izračunaj i prikaži</button>
+    </div>`;
+  openSheet(html);
+}
+
+function generateSlotsText() {
+  const startInput = document.getElementById("export-start").value;
+  const endInput = document.getElementById("export-end").value;
+
+  if (!startInput || !endInput) {
+    toast("Izaberi oba datuma");
+    return;
+  }
+
+  let current = startOfDay(new Date(startInput));
+  const end = startOfDay(new Date(endInput));
+
+  if (current > end) {
+    toast("Datum 'Od' mora biti pre datuma 'Do'");
+    return;
+  }
+
+  let text = "";
+
+  while (current <= end) {
+    // 1. Uzmi radne sate
+    let workingSlots = [];
+    const schedule = getDaySchedule(current);
+    
+    if (schedule === "off") {
+      workingSlots = []; // Ne radi
+    } else if (Array.isArray(schedule)) {
+      workingSlots = schedule; // Podesi sate
+    } else {
+      // Ako nema "Podesi sate", proveri "Slobodan termin"
+      const fakeAppts = state.appointments.filter(a => 
+        a.status === "scheduled" && 
+        isFakeAppointment(a) && 
+        sameDay(new Date(a.date), current)
+      );
+      if (fakeAppts.length > 0) {
+        workingSlots = fakeAppts.map(a => minutesFromDate(new Date(a.date)));
+      }
+    }
+
+    // Ako nema definisanih radnih sati (ni Podesi sate, ni Slobodan termin),
+    // preskačemo ovaj dan jer Jelena nije naglasila da radi.
+    if (workingSlots.length > 0) {
+      // 2. Uzmi zauzete sate (samo prave klijentkinje)
+      const booked = state.appointments
+        .filter(a => a.status === "scheduled" && !isFakeAppointment(a) && sameDay(new Date(a.date), current))
+        .map(a => minutesFromDate(new Date(a.date)));
+
+      // 3. Filtriraj samo slobodne
+      const available = workingSlots.filter(m => !booked.includes(m));
+
+      if (available.length > 0) {
+        available.sort((a,b) => a-b);
+        
+        const formattedSlots = available.map(m => {
+          const h = Math.floor(m / 60);
+          const min = m % 60;
+          return min === 0 ? String(h).padStart(2,"0") : `${String(h).padStart(2,"0")}:${String(min).padStart(2,"0")}`;
+        }).join(",");
+
+        const dayStr = String(current.getDate()).padStart(2, "0");
+        const monthStr = String(current.getMonth() + 1).padStart(2, "0");
+        text += `${dayStr}.${monthStr}–${formattedSlots}\n`;
+      }
+    }
+
+    current = addDays(current, 1);
+  }
+
+  if (text === "") {
+    text = "Nema slobodnih termina u izabranom periodu (ili nisi označila radne sate).";
+  }
+
+  const resultHtml = `<div class="sheet-grabber"></div>
+    <div class="sheet-header">
+      <div class="sheet-title">Rezultat</div>
       <button class="sheet-close" onclick="closeSheet()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
     <div class="sheet-body">
       <p style="font-size:14px; color:var(--text-2); margin-bottom:12px;">
-        Kopiraj tekst ispod i nalepi u svoju sliku za Instagram.
+        Kopiraj tekst ispod i nalepi u svoju sliku.
       </p>
       <textarea id="slots-text" readonly style="width:100%; height:300px; padding:12px; border-radius:12px; background:var(--surface-2); border:none; font-family:monospace; font-size:15px; line-height:1.5; margin-bottom:16px; color:var(--text);">${text.trim()}</textarea>
-      <button class="btn btn-primary" onclick="copySlotsText()">Kopiraj tekst</button>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="openExportSlotsSheet()">Nazad</button>
+        <button class="btn btn-primary" onclick="copySlotsText()">Kopiraj tekst</button>
+      </div>
     </div>`;
-  openSheet(html);
+  openSheet(resultHtml);
 }
 
 function copySlotsText() {
@@ -2422,7 +2465,6 @@ function copySlotsText() {
     closeSheet();
   });
 }
-// ============================================================
 // INIT
 // ============================================================
 (function init() {
