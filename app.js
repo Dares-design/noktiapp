@@ -15,11 +15,11 @@ const TELEGRAM_LAST_KEY = "nokti_telegram_last_backup";
 // ============================================================
 function dateKey(d) {
   const x = d instanceof Date ? d : new Date(d);
-  return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`;
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
 }
 
 function getDaySchedule(date) {
-  if (!state.daySchedules) return null;
+  if (!state || !state.daySchedules) return null;
   return state.daySchedules[dateKey(date)] || null;
 }
 
@@ -32,6 +32,63 @@ function setDaySchedule(date, schedule) {
     state.daySchedules[key] = schedule;
   }
   saveState();
+}
+
+function getWorkingMinutesForDay(date) {
+  const start = state.settings.workStart * 60;
+  const end = state.settings.workEnd * 60;
+  const allDefault = [];
+  for (let m = start; m < end; m += 30) allDefault.push(m);
+
+  const schedule = getDaySchedule(date);
+  if (schedule === "off") {
+    return [];
+  }
+  if (Array.isArray(schedule)) {
+    return [...schedule].sort((a, b) => a - b);
+  }
+  if (schedule === "all") {
+    return allDefault;
+  }
+
+  const dayAppts = state.appointments.filter(a => {
+    if (a.status !== "scheduled") return false;
+    return sameDay(new Date(a.date), date);
+  });
+  const fakeSlots = dayAppts
+    .filter(a => isFakeAppointment(a))
+    .map(a => minutesFromDate(new Date(a.date)));
+  const realSlots = dayAppts
+    .filter(a => !isFakeAppointment(a))
+    .map(a => minutesFromDate(new Date(a.date)));
+
+  if (fakeSlots.length > 0) {
+    return [...new Set([...fakeSlots, ...realSlots])].sort((a, b) => a - b);
+  }
+
+  return null;
+}
+
+function getFreeSlotsForDay(date) {
+  const schedule = getDaySchedule(date);
+  if (schedule === "off") return [];
+  if (!Array.isArray(schedule)) return [];
+
+  return [...schedule]
+    .sort((a, b) => a - b)
+    .filter(m => !isSlotBusyOnDate(date, m));
+}
+
+function isSlotBusyOnDate(date, minutes, ignoreId = null, ignoreFakeId = null) {
+  if (!date) return false;
+  return state.appointments.some(a => {
+    if (a.status !== "scheduled") return false;
+    if (ignoreId && a.id === ignoreId) return false;
+    if (ignoreFakeId && a.id === ignoreFakeId) return false;
+    if (isFakeAppointment(a)) return false;
+    const d = new Date(a.date);
+    return sameDay(d, date) && minutesFromDate(d) === minutes;
+  });
 }
 
 // ============================================================
@@ -81,9 +138,9 @@ function reviveState(raw) {
 }
 
 function seedDemoState() {
-  const today = (h, m=0) => { const d = new Date(); d.setHours(h, m, 0, 0); return d; };
-  const daysAgo = (n, h, m=0) => { const d = new Date(); d.setDate(d.getDate()-n); d.setHours(h, m, 0, 0); return d; };
-  const daysAhead = (n, h, m=0) => { const d = new Date(); d.setDate(d.getDate()+n); d.setHours(h, m, 0, 0); return d; };
+  const today = (h, m = 0) => { const d = new Date(); d.setHours(h, m, 0, 0); return d; };
+  const daysAgo = (n, h, m = 0) => { const d = new Date(); d.setDate(d.getDate() - n); d.setHours(h, m, 0, 0); return d; };
+  const daysAhead = (n, h, m = 0) => { const d = new Date(); d.setDate(d.getDate() + n); d.setHours(h, m, 0, 0); return d; };
   return {
     clients: [
       { id: "c1", firstName: "Ana", lastName: "Petrović", phone: "064 123 4567", note: "Voli kraće nokte.", isArchived: false },
@@ -100,16 +157,16 @@ function seedDemoState() {
       { id: "s6", name: "French", price: 500, sortOrder: 5, isArchived: false }
     ],
     appointments: [
-      { id:"a1", date:today(10).toISOString(), clientId:"c1", services:[{name:"Gel lak",price:2500},{name:"French",price:500}], status:"scheduled", paymentStatus:"unpaid" },
-      { id:"a2", date:today(12).toISOString(), clientId:"c2", services:[{name:"Manikir",price:1500},{name:"Pedikir",price:2000}], status:"scheduled", paymentStatus:"unpaid" },
-      { id:"a3", date:today(16).toISOString(), clientId:"c3", services:[{name:"Gel lak",price:2500}], status:"scheduled", paymentStatus:"unpaid" },
-      { id:"a4", date:daysAhead(1,11).toISOString(), clientId:"c1", services:[{name:"Korekcija",price:2000}], status:"scheduled", paymentStatus:"unpaid" },
-      { id:"a5", date:daysAhead(3,10).toISOString(), clientId:"c4", services:[{name:"Manikir",price:1500}], status:"scheduled", paymentStatus:"unpaid" },
-      { id:"a7", date:daysAgo(1,14).toISOString(), clientId:"c2", services:[{name:"Gel lak",price:2500}], status:"completed", paymentStatus:"unpaid" },
-      { id:"a8", date:daysAgo(2,10).toISOString(), clientId:"c1", services:[{name:"Gel lak",price:2500}], status:"completed", paymentStatus:"paid" },
-      { id:"a9", date:daysAgo(5,11).toISOString(), clientId:"c1", services:[{name:"Gel lak",price:2500}], status:"completed", paymentStatus:"paid" },
-      { id:"a10", date:daysAgo(12,10).toISOString(), clientId:"c1", services:[{name:"Korekcija",price:2000}], status:"completed", paymentStatus:"paid" },
-      { id:"a11", date:daysAgo(3,13).toISOString(), clientId:"c3", services:[{name:"Manikir",price:1500}], status:"cancelled", paymentStatus:"unpaid" }
+      { id: "a1", date: today(10).toISOString(), clientId: "c1", services: [{ name: "Gel lak", price: 2500 }, { name: "French", price: 500 }], status: "scheduled", paymentStatus: "unpaid" },
+      { id: "a2", date: today(12).toISOString(), clientId: "c2", services: [{ name: "Manikir", price: 1500 }, { name: "Pedikir", price: 2000 }], status: "scheduled", paymentStatus: "unpaid" },
+      { id: "a3", date: today(16).toISOString(), clientId: "c3", services: [{ name: "Gel lak", price: 2500 }], status: "scheduled", paymentStatus: "unpaid" },
+      { id: "a4", date: daysAhead(1, 11).toISOString(), clientId: "c1", services: [{ name: "Korekcija", price: 2000 }], status: "scheduled", paymentStatus: "unpaid" },
+      { id: "a5", date: daysAhead(3, 10).toISOString(), clientId: "c4", services: [{ name: "Manikir", price: 1500 }], status: "scheduled", paymentStatus: "unpaid" },
+      { id: "a7", date: daysAgo(1, 14).toISOString(), clientId: "c2", services: [{ name: "Gel lak", price: 2500 }], status: "completed", paymentStatus: "unpaid" },
+      { id: "a8", date: daysAgo(2, 10).toISOString(), clientId: "c1", services: [{ name: "Gel lak", price: 2500 }], status: "completed", paymentStatus: "paid" },
+      { id: "a9", date: daysAgo(5, 11).toISOString(), clientId: "c1", services: [{ name: "Gel lak", price: 2500 }], status: "completed", paymentStatus: "paid" },
+      { id: "a10", date: daysAgo(12, 10).toISOString(), clientId: "c1", services: [{ name: "Korekcija", price: 2000 }], status: "completed", paymentStatus: "paid" },
+      { id: "a11", date: daysAgo(3, 13).toISOString(), clientId: "c3", services: [{ name: "Manikir", price: 1500 }], status: "cancelled", paymentStatus: "unpaid" }
     ],
     settings: { workStart: 8, workEnd: 20, cloudBackupEnabled: true },
     daySchedules: {},
@@ -162,7 +219,7 @@ async function backupToCloud() {
 
     const res = await fetch(url, {
       method,
-      headers: { "Content-Type":"application/json", "X-Master-Key": JSONBIN_MASTER_KEY },
+      headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_MASTER_KEY },
       body: JSON.stringify(payload)
     });
 
@@ -209,9 +266,9 @@ async function sendTelegramBackup(force = false) {
   try {
     const json = JSON.stringify(state, null, 2);
     const date = new Date();
-    const dateStr = `${String(date.getDate()).padStart(2,"0")}.${String(date.getMonth()+1).padStart(2,"0")}.${date.getFullYear()}`;
-    const timeStr = `${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`;
-    const filename = `noktia-backup-${date.toISOString().slice(0,10)}.json`;
+    const dateStr = `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
+    const timeStr = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    const filename = `noktia-backup-${date.toISOString().slice(0, 10)}.json`;
 
     const formData = new FormData();
     formData.append("chat_id", TELEGRAM_CHAT_ID);
@@ -254,24 +311,24 @@ document.addEventListener("visibilitychange", () => {
 // ============================================================
 // HELPERS
 // ============================================================
-const DAYS_LONG = ["nedelja","ponedeljak","utorak","sreda","četvrtak","petak","subota"];
-const DAYS_SHORT = ["NED","PON","UTO","SRE","ČET","PET","SUB"];
-const MONTHS = ["januar","februar","mart","april","maj","jun","jul","avgust","septembar","oktobar","novembar","decembar"];
-const MONTHS_SHORT = ["jan","feb","mar","apr","maj","jun","jul","avg","sep","okt","nov","dec"];
+const DAYS_LONG = ["nedelja", "ponedeljak", "utorak", "sreda", "četvrtak", "petak", "subota"];
+const DAYS_SHORT = ["NED", "PON", "UTO", "SRE", "ČET", "PET", "SUB"];
+const MONTHS = ["januar", "februar", "mart", "april", "maj", "jun", "jul", "avgust", "septembar", "oktobar", "novembar", "decembar"];
+const MONTHS_SHORT = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"];
 
-function startOfDay(d) { const x=new Date(d); x.setHours(0,0,0,0); return x; }
-function addDays(d,n) { const x=new Date(d); x.setDate(x.getDate()+n); return x; }
-function sameDay(a,b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
-function isToday(d) { return sameDay(d,new Date()); }
+function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+function isToday(d) { return sameDay(d, new Date()); }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-function formatTime(d) { const x=d instanceof Date?d:new Date(d); return `${String(x.getHours()).padStart(2,"0")}:${String(x.getMinutes()).padStart(2,"0")}`; }
+function formatTime(d) { const x = d instanceof Date ? d : new Date(d); return `${String(x.getHours()).padStart(2, "0")}:${String(x.getMinutes()).padStart(2, "0")}`; }
 function formatMoney(n) { return Number(n).toLocaleString("sr-RS") + " RSD"; }
 function formatMoneyShort(n) { return Number(n).toLocaleString("sr-RS"); }
-function minutesFromDate(d) { return d.getHours()*60 + d.getMinutes(); }
-function formatMinutes(m) { return `${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`; }
+function minutesFromDate(d) { return d.getHours() * 60 + d.getMinutes(); }
+function formatMinutes(m) { return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`; }
 
 function dayTitle(d) {
-  const diff = Math.round((startOfDay(d)-startOfDay(new Date()))/86400000);
+  const diff = Math.round((startOfDay(d) - startOfDay(new Date())) / 86400000);
   if (diff === 0) return "Danas";
   if (diff === 1) return "Sutra";
   if (diff === -1) return "Juče";
@@ -279,41 +336,43 @@ function dayTitle(d) {
 }
 function daySubtitle(d) { return `${capitalize(DAYS_LONG[d.getDay()])}, ${d.getDate()}. ${MONTHS[d.getMonth()]}`; }
 function weekFor(d) {
-  const day=d.getDay(); const diff = day===0?-6:1-day;
+  const day = d.getDay(); const diff = day === 0 ? -6 : 1 - day;
   const mon = addDays(d, diff);
-  return Array.from({length:7},(_,i)=>addDays(mon,i));
+  return Array.from({ length: 7 }, (_, i) => addDays(mon, i));
 }
-function clientById(id) { return state.clients.find(c=>c.id===id); }
-function appointmentTotal(a) { return a.services.reduce((s,x)=>s+x.price,0); }
-function appointmentsFor(d) { return state.appointments.filter(a=>sameDay(new Date(a.date),d)).sort((a,b)=>new Date(a.date)-new Date(b.date)); }
-function dayHasAppointments(d) { return state.appointments.some(a=>sameDay(new Date(a.date),d)); }
-function isPaidCompleted(a) { return a.status==="completed" && a.paymentStatus==="paid"; }
-function isAwaitingPayment(a) { return a.status==="completed" && a.paymentStatus==="unpaid"; }
+function clientById(id) { return state.clients.find(c => c.id === id); }
+function appointmentTotal(a) { return a.services.reduce((s, x) => s + x.price, 0); }
+function appointmentsFor(d) { return state.appointments.filter(a => sameDay(new Date(a.date), d)).sort((a, b) => new Date(a.date) - new Date(b.date)); }
+function dayHasAppointments(d) {
+  return state.appointments.some(a => sameDay(new Date(a.date), d)) || getFreeSlotsForDay(d).length > 0;
+}
+function isPaidCompleted(a) { return a.status === "completed" && a.paymentStatus === "paid"; }
+function isAwaitingPayment(a) { return a.status === "completed" && a.paymentStatus === "unpaid"; }
 
-function paidRevenueInRange(start,end) {
-  return state.appointments.filter(a=>isPaidCompleted(a) && new Date(a.date)>=start && new Date(a.date)<end).reduce((s,a)=>s+appointmentTotal(a),0);
+function paidRevenueInRange(start, end) {
+  return state.appointments.filter(a => isPaidCompleted(a) && new Date(a.date) >= start && new Date(a.date) < end).reduce((s, a) => s + appointmentTotal(a), 0);
 }
-function todayRevenue() { const s=startOfDay(new Date()); return paidRevenueInRange(s, addDays(s,1)); }
+function todayRevenue() { const s = startOfDay(new Date()); return paidRevenueInRange(s, addDays(s, 1)); }
 function weekRevenue() {
-  const day=new Date().getDay(); const diff = day===0?-6:1-day;
+  const day = new Date().getDay(); const diff = day === 0 ? -6 : 1 - day;
   const mon = startOfDay(addDays(new Date(), diff));
-  return paidRevenueInRange(mon, addDays(mon,7));
+  return paidRevenueInRange(mon, addDays(mon, 7));
 }
 function monthRevenue() {
-  const d=new Date(); const s=new Date(d.getFullYear(),d.getMonth(),1); const e=new Date(d.getFullYear(),d.getMonth()+1,1);
-  return paidRevenueInRange(s,e);
+  const d = new Date(); const s = new Date(d.getFullYear(), d.getMonth(), 1); const e = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  return paidRevenueInRange(s, e);
 }
-function unpaidTotal() { return state.appointments.filter(isAwaitingPayment).reduce((s,a)=>s+appointmentTotal(a),0); }
-function unpaidAppointments() { return state.appointments.filter(isAwaitingPayment).sort((a,b)=>new Date(a.date)-new Date(b.date)); }
-function clientPaidRevenue(id) { return state.appointments.filter(a=>a.clientId===id && isPaidCompleted(a)).reduce((s,a)=>s+appointmentTotal(a),0); }
-function clientUnpaidTotal(id) { return state.appointments.filter(a=>a.clientId===id && isAwaitingPayment(a)).reduce((s,a)=>s+appointmentTotal(a),0); }
-function initials(c) { if(!c) return "—"; return (c.firstName[0]||"") + (c.lastName[0]||""); }
+function unpaidTotal() { return state.appointments.filter(isAwaitingPayment).reduce((s, a) => s + appointmentTotal(a), 0); }
+function unpaidAppointments() { return state.appointments.filter(isAwaitingPayment).sort((a, b) => new Date(a.date) - new Date(b.date)); }
+function clientPaidRevenue(id) { return state.appointments.filter(a => a.clientId === id && isPaidCompleted(a)).reduce((s, a) => s + appointmentTotal(a), 0); }
+function clientUnpaidTotal(id) { return state.appointments.filter(a => a.clientId === id && isAwaitingPayment(a)).reduce((s, a) => s + appointmentTotal(a), 0); }
+function initials(c) { if (!c) return "—"; return (c.firstName[0] || "") + (c.lastName[0] || ""); }
 
 function nextAppointmentFor(clientId) {
-  return state.appointments.filter(a=>a.clientId===clientId && a.status==="scheduled" && new Date(a.date)>=new Date()).sort((a,b)=>new Date(a.date)-new Date(b.date))[0];
+  return state.appointments.filter(a => a.clientId === clientId && a.status === "scheduled" && new Date(a.date) >= new Date()).sort((a, b) => new Date(a.date) - new Date(b.date))[0];
 }
 function lastCompletedFor(clientId) {
-  return state.appointments.filter(a=>a.clientId===clientId && a.status==="completed").sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+  return state.appointments.filter(a => a.clientId === clientId && a.status === "completed").sort((a, b) => new Date(b.date) - new Date(a.date))[0];
 }
 
 function isFakeAppointment(apt) {
@@ -322,10 +381,10 @@ function isFakeAppointment(apt) {
   if (!client) return false;
   const fullName = `${client.firstName} ${client.lastName}`.toLowerCase().trim();
   return fullName.includes("slobodan")
-      || fullName.includes("slobodno")
-      || fullName.includes("blokirano")
-      || fullName.includes("zauzeto")
-      || fullName.includes("blocked");
+    || fullName.includes("slobodno")
+    || fullName.includes("blokirano")
+    || fullName.includes("zauzeto")
+    || fullName.includes("blocked");
 }
 
 // ============================================================
@@ -336,7 +395,7 @@ function toast(msg) {
   el.className = "toast";
   el.textContent = msg;
   document.getElementById("toast-container").appendChild(el);
-  setTimeout(()=>{ el.classList.add("fade-out"); setTimeout(()=>el.remove(),300); }, 2200);
+  setTimeout(() => { el.classList.add("fade-out"); setTimeout(() => el.remove(), 300); }, 2200);
 }
 
 function toastUndo(msg, undoFn) {
@@ -351,43 +410,47 @@ function toastUndo(msg, undoFn) {
     active = false;
     undoFn();
     el.classList.add("fade-out");
-    setTimeout(()=>el.remove(), 300);
+    setTimeout(() => el.remove(), 300);
   };
-  setTimeout(()=>{
+  setTimeout(() => {
     if (!active) return;
     active = false;
     el.classList.add("fade-out");
-    setTimeout(()=>el.remove(), 300);
+    setTimeout(() => el.remove(), 300);
   }, 5000);
 }
 
 // ============================================================
-// SHEET SYSTEM — SA POPRAVLJENIM BUG-OM (sheetVersion)
+// SHEET SYSTEM — BEZ RACE CONDITION-A
 // ============================================================
-let activeSheet = null;
+let activeSheet = false;
 let sheetVersion = 0;
 
 function openSheet(html) {
   sheetVersion++;
   const container = document.getElementById("sheet-container");
   const overlay = document.getElementById("sheet-overlay");
+  if (!container || !overlay) return;
   container.innerHTML = `<div class="sheet">${html}</div>`;
-  requestAnimationFrame(()=>{ overlay.classList.add("visible"); container.classList.add("visible"); });
+  overlay.classList.add("visible");
+  container.classList.add("visible");
   overlay.onclick = () => closeSheet();
   activeSheet = true;
 }
+
 function closeSheet() {
   const container = document.getElementById("sheet-container");
   const overlay = document.getElementById("sheet-overlay");
+  if (!container || !overlay) return;
   const myVersion = sheetVersion;
   overlay.classList.remove("visible");
   container.classList.remove("visible");
-  setTimeout(()=>{
+  setTimeout(() => {
     if (sheetVersion === myVersion) {
       container.innerHTML = "";
-      activeSheet = null;
+      activeSheet = false;
     }
-  }, 400);
+  }, 350);
 }
 
 // ============================================================
@@ -397,7 +460,7 @@ function showWelcomeIfNeeded() {
   if (localStorage.getItem(INITIALIZED_KEY)) return false;
   const overlay = document.getElementById("welcome-overlay");
   overlay.classList.remove("hidden");
-  requestAnimationFrame(()=> overlay.classList.add("visible"));
+  requestAnimationFrame(() => overlay.classList.add("visible"));
   return true;
 }
 function startFresh() {
@@ -415,7 +478,7 @@ function startWithDemo() {
 function hideWelcome() {
   const overlay = document.getElementById("welcome-overlay");
   overlay.classList.remove("visible");
-  setTimeout(()=> overlay.classList.add("hidden"), 400);
+  setTimeout(() => overlay.classList.add("hidden"), 400);
   renderToday();
   updateSettingsSub();
 }
@@ -423,15 +486,84 @@ function hideWelcome() {
 // ============================================================
 // RENDER — DANAS
 // ============================================================
-function renderToday() {
-  const title=document.getElementById("day-title");
-  const sub=document.getElementById("day-subtitle");
-  const strip=document.getElementById("week-strip");
-  const summary=document.getElementById("day-summary");
-  const list=document.getElementById("appointments-list");
-  const backBtn=document.getElementById("btn-back-today");
+function renderScheduledFreeSlotCard(day, minutes) {
+  const d = new Date(day);
+  d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
 
-  const d = state.selectedDate;
+  const card = document.createElement("div");
+  card.className = "appointment-card";
+  card.style.opacity = "0.82";
+  card.innerHTML = `
+    <div class="appointment-row-1">
+      <span class="appointment-time">${formatTime(d)}</span>
+    </div>
+    <div class="appointment-name">— Slobodan termin —</div>
+    <div class="appointment-services">Slobodno za zakazivanje</div>`;
+  card.onclick = () => openScheduledFreeSlotSheet(day, minutes);
+  return card;
+}
+
+function openScheduledFreeSlotSheet(day, minutes) {
+  const d = new Date(day);
+  d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+  const dayLabel = `${capitalize(DAYS_LONG[d.getDay()])}, ${d.getDate()}. ${MONTHS_SHORT[d.getMonth()]}`;
+
+  const html = `<div class="sheet-grabber"></div>
+    <div class="sheet-header">
+      <div class="sheet-title">Slobodan termin</div>
+      <button class="sheet-close" type="button" onclick="closeSheet()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <div class="detail-hero">
+        <div class="detail-time">${formatTime(d)}</div>
+        <div class="detail-date">${dayLabel}</div>
+      </div>
+
+      <p style="text-align:center; color:var(--text-2); font-size:15px; line-height:1.5; margin-bottom:24px;">
+        Ovaj sat je označen kao slobodan.<br>Želiš li da zakažeš klijentkinju?
+      </p>
+
+      <button type="button" class="btn btn-primary" onclick="quickBookFromFreeSlot(new Date(${d.getTime()}), ${minutes})">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Zakaži klijentkinju
+      </button>
+      <button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="removeScheduledFreeSlot(new Date(${d.getTime()}), ${minutes})">
+        Ukloni ovaj sat
+      </button>
+      <button type="button" class="btn btn-secondary" style="margin-top:12px; background:transparent; color:var(--text-2);" onclick="closeSheet()">
+        Zatvori
+      </button>
+    </div>`;
+  openSheet(html);
+}
+
+function removeScheduledFreeSlot(day, minutes) {
+  const prevSchedule = getDaySchedule(day);
+  if (!Array.isArray(prevSchedule)) {
+    closeSheet();
+    return;
+  }
+  const updated = prevSchedule.filter(m => m !== minutes);
+  setDaySchedule(day, updated.length > 0 ? updated : null);
+  closeSheet();
+  toastUndo("Sat uklonjen", () => {
+    setDaySchedule(day, prevSchedule);
+    renderToday();
+  });
+  renderToday();
+}
+
+function renderToday() {
+  const title = document.getElementById("day-title");
+  const sub = document.getElementById("day-subtitle");
+  const strip = document.getElementById("week-strip");
+  const summary = document.getElementById("day-summary");
+  const list = document.getElementById("appointments-list");
+  const backBtn = document.getElementById("btn-back-today");
+
+  const d = startOfDay(state.selectedDate);
   title.textContent = dayTitle(d);
   sub.textContent = daySubtitle(d);
 
@@ -451,14 +583,53 @@ function renderToday() {
   });
 
   const apts = appointmentsFor(d);
-  if (apts.length === 0) summary.textContent = "Nemaš termina";
-  else {
-    const total = apts.filter(a=>a.status!=="cancelled").reduce((s,a)=>s+appointmentTotal(a),0);
-    summary.textContent = `${apts.length} ${apts.length===1?"termin":"termina"} · ${formatMoney(total)}`;
+  const realApts = apts.filter(a => !isFakeAppointment(a));
+  const schedule = getDaySchedule(d);
+  const freeSlots = getFreeSlotsForDay(d);
+
+  // Kombinujemo prave/fake termine i podešene slobodne sate hronološki
+  const timelineItems = [];
+  apts.forEach(apt => {
+    timelineItems.push({
+      kind: "apt",
+      minutes: minutesFromDate(new Date(apt.date)),
+      apt
+    });
+  });
+
+  const existingSlotMinutes = new Set(
+    apts
+      .filter(a => a.status !== "cancelled")
+      .map(a => minutesFromDate(new Date(a.date)))
+  );
+
+  freeSlots.forEach(m => {
+    if (!existingSlotMinutes.has(m)) {
+      timelineItems.push({
+        kind: "free-slot",
+        minutes: m
+      });
+    }
+  });
+
+  timelineItems.sort((a, b) => a.minutes - b.minutes);
+
+  if (realApts.length === 0) {
+    if (freeSlots.length > 0) {
+      summary.textContent = `${freeSlots.length} ${freeSlots.length === 1 ? "slobodan termin" : "slobodna termina"}`;
+    } else if (schedule === "off") {
+      summary.textContent = "Neradni dan";
+    } else {
+      summary.textContent = "Nemaš termina";
+    }
+  } else {
+    const total = realApts.filter(a => a.status !== "cancelled").reduce((s, a) => s + appointmentTotal(a), 0);
+    const bookedCount = realApts.filter(a => a.status !== "cancelled").length;
+    summary.textContent = `${bookedCount} ${bookedCount === 1 ? "termin" : "termina"} · ${formatMoney(total)}`;
   }
 
   list.innerHTML = "";
-  if (apts.length === 0) {
+  if (timelineItems.length === 0) {
     list.innerHTML = `
       <div class="empty-state">
         <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -467,42 +638,51 @@ function renderToday() {
           <line x1="8" y1="2" x2="8" y2="6"/>
           <line x1="3" y1="10" x2="21" y2="10"/>
         </svg>
-        <p class="empty-title">Slobodan dan</p>
-        <p class="empty-message">Nema zakazanih termina.</p>
+        <p class="empty-title">${schedule === "off" ? "Ne radiš ovaj dan" : "Slobodan dan"}</p>
+        <p class="empty-message">${schedule === "off" ? "Klikni „Podesi sate” ako želiš da promeniš." : "Nema zakazanih termina."}</p>
       </div>`;
   } else {
-    apts.forEach(apt => list.appendChild(renderAppointmentCard(apt)));
+    timelineItems.forEach(item => {
+      if (item.kind === "apt") {
+        list.appendChild(renderAppointmentCard(item.apt));
+      } else {
+        list.appendChild(renderScheduledFreeSlotCard(d, item.minutes));
+      }
+    });
   }
 
   backBtn.classList.toggle("hidden", isToday(d));
 
-  // "Podesi sate" — vidljivo za buduće dane i danas
+  // "Podesi sate" — vidljivo za danas i buduće dane
   const oldRow = document.getElementById("day-schedule-row");
   if (oldRow) oldRow.remove();
 
-  if (startOfDay(d) >= startOfDay(new Date())) {
+  if (d >= startOfDay(new Date())) {
     const row = document.createElement("div");
     row.id = "day-schedule-row";
     row.style.cssText = "display:flex; justify-content:space-between; align-items:center; margin-top:-12px; margin-bottom:16px; padding-left:4px; padding-right:4px;";
 
     const hint = document.createElement("div");
     hint.style.cssText = "font-size:12px; color:var(--text-3); font-weight:500;";
-    const schedule = getDaySchedule(d);
     if (schedule === "off") {
       hint.textContent = "Ne radiš ovaj dan";
       hint.style.color = "var(--danger)";
     } else if (Array.isArray(schedule)) {
       const times = schedule.map(m => formatMinutes(m)).join(", ");
-      hint.textContent = times.length > 42 ? `Radiš: ${schedule.length} sata` : `Radiš: ${times}`;
+      hint.textContent = times.length > 42 ? `Radiš: ${schedule.length} termina` : `Radiš: ${times}`;
+      hint.style.color = "var(--success)";
+    } else if (schedule === "all") {
+      hint.textContent = "Radiš ceo dan";
       hint.style.color = "var(--success)";
     } else {
       hint.textContent = "Radiš ceo dan";
     }
 
     const btn = document.createElement("button");
+    btn.type = "button";
     btn.style.cssText = "font-size:12px; font-weight:700; color:var(--info); padding:4px 8px;";
     btn.textContent = "Podesi sate";
-    btn.onclick = editDayScheduleFromDanas;
+    btn.onclick = () => editDayScheduleForDate(d);
 
     row.appendChild(hint);
     row.appendChild(btn);
@@ -513,8 +693,26 @@ function renderToday() {
     }
   }
 
-  // Kalendar ikonica — dodaj ako ne postoji
   ensureCalendarButton();
+}
+
+function quickBookFromFreeSlot(day, minutes) {
+  newApptClientSearch = "";
+  newApptState = {
+    mode: "new",
+    editingId: null,
+    replacesFakeId: null,
+    step: "client",
+    date: startOfDay(day),
+    displayedMonth: new Date(day.getFullYear(), day.getMonth(), 1),
+    time: minutes,
+    clientId: null,
+    services: [],
+    pickedHours: [],
+    fromProfile: false,
+    returnToTodayAfterSchedule: false
+  };
+  renderNewAppointmentSheet();
 }
 
 function ensureCalendarButton() {
@@ -528,6 +726,7 @@ function ensureCalendarButton() {
   btn = document.createElement("button");
   btn.id = "btn-open-calendar";
   btn.className = "icon-btn";
+  btn.type = "button";
   btn.setAttribute("aria-label", "Izaberi datum");
   btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
   btn.onclick = openDatePicker;
@@ -565,7 +764,7 @@ function renderAppointmentCard(apt) {
       <span class="appointment-price">${formatMoney(total)}</span>
     </div>
     <div class="appointment-name">${client ? client.firstName + " " + client.lastName : "—"}</div>
-    <div class="appointment-services">${apt.services.map(s=>s.name).join(", ")}</div>
+    <div class="appointment-services">${apt.services.map(s => s.name).join(", ")}</div>
     ${badge}`;
   card.onclick = () => openAppointmentDetail(apt.id);
   return card;
@@ -590,7 +789,7 @@ function renderDatePicker() {
   let html = `<div class="sheet-grabber"></div>
     <div class="sheet-header">
       <div class="sheet-title">Izaberi datum</div>
-      <button class="sheet-close" onclick="closeSheet()">
+      <button class="sheet-close" type="button" onclick="closeSheet()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -598,11 +797,11 @@ function renderDatePicker() {
 
   html += `<div class="calendar">
     <div class="calendar-header">
-      <button class="calendar-nav" onclick="pickerPrevMonth()" aria-label="Prethodni mesec">
+      <button class="calendar-nav" type="button" onclick="pickerPrevMonth()" aria-label="Prethodni mesec">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
       <div class="calendar-title">${MONTHS[month]} ${year}</div>
-      <button class="calendar-nav" onclick="pickerNextMonth()" aria-label="Sledeći mesec">
+      <button class="calendar-nav" type="button" onclick="pickerNextMonth()" aria-label="Sledeći mesec">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
     </div>
@@ -635,15 +834,13 @@ function renderDatePicker() {
     if (isTodayCell && !isSelected) cls += " today";
     if (hasAppts) cls += " has-appts";
 
-    html += `<button class="${cls}" onclick="pickerPickDay(${day.getTime()})">
+    html += `<button type="button" class="${cls}" onclick="pickerPickDay(${day.getTime()})">
       <span>${day.getDate()}</span>
     </button>`;
   }
 
   html += `</div></div>`;
-
-  html += `<button class="btn btn-secondary" style="margin-top:20px;" onclick="pickerGoToday()">Idi na danas</button>`;
-
+  html += `<button type="button" class="btn btn-secondary" style="margin-top:20px;" onclick="pickerGoToday()">Idi na danas</button>`;
   html += `</div>`;
   openSheet(html);
 }
@@ -679,11 +876,11 @@ let clientSearchQuery = "";
 
 function renderClients() {
   const list = document.getElementById("clients-list");
-  const active = state.clients.filter(c=>!c.isArchived);
+  const active = state.clients.filter(c => !c.isArchived);
   const q = clientSearchQuery.toLowerCase().trim();
-  const filtered = q ? active.filter(c=>(c.firstName+c.lastName).toLowerCase().includes(q)) : active;
+  const filtered = q ? active.filter(c => (c.firstName + c.lastName).toLowerCase().includes(q)) : active;
 
-  filtered.sort((a,b) => {
+  filtered.sort((a, b) => {
     const an = nextAppointmentFor(a.id), bn = nextAppointmentFor(b.id);
     if (an && bn) return new Date(an.date) - new Date(bn.date);
     if (an) return -1; if (bn) return 1;
@@ -709,12 +906,12 @@ function renderClients() {
 
   filtered.forEach((client, i) => {
     const next = nextAppointmentFor(client.id);
-    const visits = state.appointments.filter(a=>a.clientId===client.id && a.status==="completed").length;
+    const visits = state.appointments.filter(a => a.clientId === client.id && a.status === "completed").length;
     const revenue = clientPaidRevenue(client.id);
 
     const card = document.createElement("div");
     card.className = "client-card";
-    card.style.animationDelay = `${i*0.03}s`;
+    card.style.animationDelay = `${i * 0.03}s`;
     const nextText = next
       ? `${formatTime(new Date(next.date))} · ${new Date(next.date).getDate()}. ${MONTHS_SHORT[new Date(next.date).getMonth()]}`
       : "Nema zakazano";
@@ -723,7 +920,7 @@ function renderClients() {
       <div class="client-row-1">
         <div style="flex:1; min-width:0;">
           <div class="client-name">${client.firstName} ${client.lastName}</div>
-          <div class="client-next ${next?"":"empty"}">${nextText}</div>
+          <div class="client-next ${next ? "" : "empty"}">${nextText}</div>
         </div>
         <div class="avatar">${initials(client)}</div>
       </div>
@@ -752,8 +949,8 @@ function renderClientProfile() {
   document.getElementById("profile-name").textContent = client.firstName;
 
   const next = nextAppointmentFor(client.id);
-  const completed = state.appointments.filter(a=>a.clientId===client.id && a.status==="completed").sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const cancelled = state.appointments.filter(a=>a.clientId===client.id && a.status==="cancelled").sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const completed = state.appointments.filter(a => a.clientId === client.id && a.status === "completed").sort((a, b) => new Date(b.date) - new Date(a.date));
+  const cancelled = state.appointments.filter(a => a.clientId === client.id && a.status === "cancelled").sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const visits = completed.length;
   const paid = clientPaidRevenue(client.id);
@@ -763,7 +960,7 @@ function renderClientProfile() {
 
   let html = `<div class="profile-hero">
     <div class="profile-avatar">${initials(client)}</div>
-    ${client.phone ? `<a href="tel:${client.phone.replace(/\s/g,"")}" class="profile-phone">${client.phone}</a>` : ""}
+    ${client.phone ? `<a href="tel:${client.phone.replace(/\s/g, "")}" class="profile-phone">${client.phone}</a>` : ""}
   </div>`;
 
   if (next) {
@@ -773,12 +970,12 @@ function renderClientProfile() {
       <div class="next-card">
         <div class="next-card-time">${formatTime(nd)}</div>
         <div class="next-card-date">${capitalize(DAYS_LONG[nd.getDay()])}, ${nd.getDate()}. ${MONTHS[nd.getMonth()]}</div>
-        <div class="next-card-services">${next.services.map(s=>s.name).join(", ")} · ${formatMoney(appointmentTotal(next))}</div>
+        <div class="next-card-services">${next.services.map(s => s.name).join(", ")} · ${formatMoney(appointmentTotal(next))}</div>
       </div>
     </div>`;
   }
 
-  html += `<button class="btn btn-primary" onclick="openNewAppointmentSheet('${client.id}')">
+  html += `<button type="button" class="btn btn-primary" onclick="openNewAppointmentSheet('${client.id}')">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     Zakaži termin
   </button>`;
@@ -789,7 +986,7 @@ function renderClientProfile() {
       <div class="stat-box"><div class="stat-label">Poseta</div><div class="stat-value">${visits}</div></div>
       <div class="stat-box"><div class="stat-label">Naplaćeno</div><div class="stat-value" style="font-size:20px;">${formatMoneyShort(paid)}<span style="font-size:13px;color:var(--text-3);font-weight:500;margin-left:4px;">RSD</span></div></div>
     </div>
-    ${unpaid>0 ? `<div class="unpaid-card" style="margin-top:12px;"><div class="unpaid-header"><div class="unpaid-title">Čeka naplatu</div><div class="unpaid-total">${formatMoney(unpaid)}</div></div></div>` : ""}
+    ${unpaid > 0 ? `<div class="unpaid-card" style="margin-top:12px;"><div class="unpaid-header"><div class="unpaid-title">Čeka naplatu</div><div class="unpaid-total">${formatMoney(unpaid)}</div></div></div>` : ""}
   </div>`;
 
   if (allHistory.length > 0) {
@@ -805,7 +1002,7 @@ function renderClientProfile() {
       html += `<div class="history-item">
         <div class="history-item-left">
           <div class="history-item-date">${d.getDate()}. ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}</div>
-          <div class="history-item-service">${apt.services.map(s=>s.name).join(", ")}</div>
+          <div class="history-item-service">${apt.services.map(s => s.name).join(", ")}</div>
           <div class="history-item-status ${statusClass}">${statusText}</div>
         </div>
         <div class="history-item-price">${formatMoney(appointmentTotal(apt))}</div>
@@ -836,13 +1033,13 @@ function renderRevenue() {
   const month = monthRevenue();
   const unpaid = unpaidTotal();
   const unpaidList = unpaidAppointments();
-  const completedCount = state.appointments.filter(a=>a.status==="completed").length;
+  const completedCount = state.appointments.filter(a => a.status === "completed").length;
   const paidCount = state.appointments.filter(isPaidCompleted).length;
-  const clientCount = new Set(state.appointments.map(a=>a.clientId)).size;
+  const clientCount = new Set(state.appointments.map(a => a.clientId)).size;
 
   const serviceCount = {};
-  state.appointments.filter(a=>a.status==="completed").forEach(a=>a.services.forEach(s=>{serviceCount[s.name]=(serviceCount[s.name]||0)+1;}));
-  const topService = Object.entries(serviceCount).sort((a,b)=>b[1]-a[1])[0]?.[0] || "—";
+  state.appointments.filter(a => a.status === "completed").forEach(a => a.services.forEach(s => { serviceCount[s.name] = (serviceCount[s.name] || 0) + 1; }));
+  const topService = Object.entries(serviceCount).sort((a, b) => b[1] - a[1])[0]?.[0] || "—";
 
   let html = `<div class="revenue-hero">
     <div class="revenue-hero-label">Ovaj mesec</div>
@@ -884,7 +1081,7 @@ function renderRevenue() {
 // ============================================================
 function renderPricelist() {
   const el = document.getElementById("pricelist-content");
-  const services = state.services.filter(s=>!s.isArchived).sort((a,b)=>a.sortOrder-b.sortOrder);
+  const services = state.services.filter(s => !s.isArchived).sort((a, b) => a.sortOrder - b.sortOrder);
   if (services.length === 0) {
     el.innerHTML = `<div class="empty-state"><p class="empty-title">Prazan cenovnik</p><p class="empty-message">Dodaj prvu uslugu pomoću + gore.</p></div>`;
     return;
@@ -903,7 +1100,7 @@ function renderPricelist() {
 // SCREEN NAVIGATION
 // ============================================================
 function showScreen(name) {
-  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
   const el = document.getElementById(`screen-${name}`);
   if (el) el.classList.add("active");
   document.getElementById("main-content").scrollTop = 0;
@@ -911,7 +1108,7 @@ function showScreen(name) {
 
 function showTab(tab) {
   state.currentTab = tab;
-  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===tab));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
   if (tab === "today") { showScreen("today"); renderToday(); }
   else if (tab === "clients") { showScreen("clients"); renderClients(); }
   else if (tab === "revenue") { showScreen("revenue"); renderRevenue(); }
@@ -925,9 +1122,9 @@ function updateNewAppointmentButton() {
 }
 
 function updateSettingsSub() {
-  const active = state.services.filter(s=>!s.isArchived).length;
-  document.getElementById("settings-pricelist-sub").textContent = `${active} ${active===1?"usluga":"usluge"}`;
-  document.getElementById("settings-work-hours-sub").textContent = `${String(state.settings.workStart).padStart(2,"0")}:00 — ${String(state.settings.workEnd).padStart(2,"0")}:00`;
+  const active = state.services.filter(s => !s.isArchived).length;
+  document.getElementById("settings-pricelist-sub").textContent = `${active} ${active === 1 ? "usluga" : "usluge"}`;
+  document.getElementById("settings-work-hours-sub").textContent = `${String(state.settings.workStart).padStart(2, "0")}:00 — ${String(state.settings.workEnd).padStart(2, "0")}:00`;
 
   const backupSub = document.getElementById("settings-backup-sub");
   if (!JSONBIN_MASTER_KEY) backupSub.textContent = "Nije postavljen";
@@ -958,7 +1155,8 @@ function openNewAppointmentSheet(preselectClientId) {
     clientId: preselectClientId || null,
     services: [],
     pickedHours: [],
-    fromProfile: !!preselectClientId
+    fromProfile: !!preselectClientId,
+    returnToTodayAfterSchedule: false
   };
   renderNewAppointmentSheet();
 }
@@ -984,42 +1182,43 @@ function openEditAppointment(appointmentId) {
     clientId: apt.clientId,
     services: apt.services.map(s => ({ ...s })),
     pickedHours: [],
-    fromProfile: false
+    fromProfile: false,
+    returnToTodayAfterSchedule: false
   };
-  closeSheet();
-  setTimeout(() => renderNewAppointmentSheet(), 500);
+  renderNewAppointmentSheet();
 }
 
 function renderNewAppointmentSheet() {
   const s = newApptState;
+  if (!s) return;
   const isEdit = s.mode === "edit";
   let html = `<div class="sheet-grabber"></div>
     <div class="sheet-header">
-      <div class="sheet-title">${isEdit ? "Izmeni termin" : "Novi termin"}</div>
-      <button class="sheet-close" onclick="closeSheet()">
+      <div class="sheet-title">${s.step === "pick-hours" ? "Podešavanje sati" : isEdit ? "Izmeni termin" : "Novi termin"}</div>
+      <button class="sheet-close" type="button" onclick="closeSheet()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
     <div class="sheet-body">`;
 
   const badges = [];
-  if (s.date) {
+  if (s.date && s.step !== "pick-hours") {
     badges.push({
       text: `${capitalize(DAYS_LONG[s.date.getDay()])}, ${s.date.getDate()}. ${MONTHS_SHORT[s.date.getMonth()]}`,
       action: "changeDate"
     });
   }
-  if (s.time !== null) {
+  if (s.time !== null && s.step !== "pick-hours") {
     badges.push({ text: formatMinutes(s.time), action: "changeTime" });
   }
-  if (s.clientId) {
+  if (s.clientId && s.step !== "pick-hours") {
     const c = clientById(s.clientId);
     if (c) badges.push({ text: `${c.firstName}`, action: "changeClient" });
   }
   if (badges.length > 0) {
     html += `<div class="picked-row">`;
     badges.forEach(b => {
-      html += `<div class="picked-badge">${b.text}<button onclick="newAppt_${b.action}()">Promeni</button></div>`;
+      html += `<div class="picked-badge">${b.text}<button type="button" onclick="newAppt_${b.action}()">Promeni</button></div>`;
     });
     html += `</div>`;
   }
@@ -1051,7 +1250,7 @@ function renderNewAppointmentSheet() {
         <div class="sheet-total-label">Ukupno</div>
         <div class="sheet-total-value">${formatMoney(total)}</div>
       </div>
-      <button class="btn btn-primary" onclick="newApptConfirm()">${isEdit ? "Sačuvaj izmene" : "Zakaži termin"}</button>`;
+      <button type="button" class="btn btn-primary" onclick="newApptConfirm()">${isEdit ? "Sačuvaj izmene" : "Zakaži termin"}</button>`;
     }
   }
 
@@ -1068,11 +1267,11 @@ function renderCalendarStep() {
   let html = `<div class="calendar">`;
 
   html += `<div class="calendar-header">
-    <button class="calendar-nav" onclick="calendarPrevMonth()" aria-label="Prethodni mesec">
+    <button class="calendar-nav" type="button" onclick="calendarPrevMonth()" aria-label="Prethodni mesec">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
     <div class="calendar-title">${MONTHS[m]} ${year}</div>
-    <button class="calendar-nav" onclick="calendarNextMonth()" aria-label="Sledeći mesec">
+    <button class="calendar-nav" type="button" onclick="calendarNextMonth()" aria-label="Sledeći mesec">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
     </button>
   </div>`;
@@ -1112,7 +1311,7 @@ function renderCalendarStep() {
 
     const disabled = isPast && !isTodayCell;
 
-    html += `<button class="${cls}" onclick="${disabled ? '' : `calendarPickDay(${day.getTime()})`}">
+    html += `<button type="button" class="${cls}" ${disabled ? "disabled" : `onclick="calendarPickDay(${dayStart.getTime()})"`}>
       <span>${day.getDate()}</span>
     </button>`;
   }
@@ -1125,45 +1324,32 @@ function renderTimeGrid() {
   const s = newApptState;
   const start = state.settings.workStart * 60;
   const end = state.settings.workEnd * 60;
-
-  let workingSlots = null;
-  let hasSchedule = false;
-
   const schedule = getDaySchedule(s.date);
 
-  if (Array.isArray(schedule)) {
-    workingSlots = new Set(schedule);
-    hasSchedule = true;
-  } else if (schedule === "off") {
-    return `<div class="time-empty">Ne radiš ovaj dan.</div>`;
-  } else {
-    const dayAppts = state.appointments.filter(a => {
-      if (a.status !== "scheduled") return false;
-      return sameDay(new Date(a.date), s.date);
-    });
-    const fakeSlots = dayAppts
-      .filter(a => isFakeAppointment(a))
-      .map(a => minutesFromDate(new Date(a.date)));
-    const realSlots = dayAppts
-      .filter(a => !isFakeAppointment(a))
-      .map(a => minutesFromDate(new Date(a.date)));
-    if (fakeSlots.length > 0) {
-      workingSlots = new Set([...fakeSlots, ...realSlots]);
-      hasSchedule = true;
-    }
+  if (schedule === "off") {
+    return `<div class="time-empty">Ne radiš ovaj dan.</div>
+      <div style="text-align:center; margin-top:12px;">
+        <button type="button" style="font-size:13px; font-weight:700; color:var(--info); padding:6px 12px;" onclick="editDayScheduleFromCurrent()">Podesi sate</button>
+      </div>`;
   }
 
-  const isWorking = (m) => workingSlots === null || workingSlots.has(m);
+  const workingList = getWorkingMinutesForDay(s.date);
+  const workingSet = workingList !== null ? new Set(workingList) : null;
+  const hasCustomSchedule = workingSet !== null;
+  const isWorking = (m) => workingSet === null || workingSet.has(m);
 
   let hasFree = false;
   for (let m = start; m < end; m += 30) {
-    if (isWorking(m) && !isSlotBusy(s.date, m)) { hasFree = true; break; }
+    if (isWorking(m) && !isSlotBusyOnDate(s.date, m, s.editingId, s.replacesFakeId)) {
+      hasFree = true;
+      break;
+    }
   }
 
   let html = "";
 
-  if (hasSchedule && workingSlots) {
-    const sorted = [...workingSlots].sort((a,b) => a-b);
+  if (hasCustomSchedule) {
+    const sorted = [...workingSet].sort((a, b) => a - b);
     const times = sorted.map(m => formatMinutes(m)).join(", ");
     html += `<div style="font-size:13px; color:var(--success); margin-bottom:10px; padding-left:4px; font-weight:600;">
       Radiš: ${times}
@@ -1171,7 +1357,7 @@ function renderTimeGrid() {
   }
 
   html += `<div style="text-align:right; margin-bottom:10px;">
-    <button style="font-size:13px; font-weight:700; color:var(--info); padding:4px 8px;" onclick="editDayScheduleFromCurrent()">Podesi sate</button>
+    <button type="button" style="font-size:13px; font-weight:700; color:var(--info); padding:4px 8px;" onclick="editDayScheduleFromCurrent()">Podesi sate</button>
   </div>`;
 
   if (!hasFree) {
@@ -1182,15 +1368,15 @@ function renderTimeGrid() {
   html += `<div class="time-grid">`;
   for (let m = start; m < end; m += 30) {
     const working = isWorking(m);
-    const busy = isSlotBusy(s.date, m);
+    const busy = isSlotBusyOnDate(s.date, m, s.editingId, s.replacesFakeId);
     const sel = s.time === m;
 
     if (!working) {
-      html += `<button class="time-chip off" disabled>${formatMinutes(m)}</button>`;
+      html += `<button type="button" class="time-chip off" disabled>${formatMinutes(m)}</button>`;
     } else if (busy) {
-      html += `<button class="time-chip busy" disabled>${formatMinutes(m)}</button>`;
+      html += `<button type="button" class="time-chip busy" disabled>${formatMinutes(m)}</button>`;
     } else {
-      html += `<button class="time-chip ${sel ? "selected" : ""}" onclick="newApptPickTime(${m})">${formatMinutes(m)}</button>`;
+      html += `<button type="button" class="time-chip ${sel ? "selected" : ""}" onclick="newApptPickTime(${m})">${formatMinutes(m)}</button>`;
     }
   }
   html += `</div>`;
@@ -1208,9 +1394,9 @@ function renderAskScheduleStep() {
       <div style="font-size:13px; color:var(--text-2); margin-bottom:6px;">${dayLabel}</div>
       <div style="font-size:22px; font-weight:700; letter-spacing:-.4px; margin-bottom:24px;">Radiš li ovaj dan?</div>
 
-      <button class="btn btn-primary" onclick="schedulePickAll()" style="margin-bottom:10px;">Ceo dan (${String(state.settings.workStart).padStart(2,"0")}–${String(state.settings.workEnd).padStart(2,"0")}h)</button>
-      <button class="btn btn-secondary" onclick="schedulePickSome()" style="margin-bottom:10px;">Samo neki sati</button>
-      <button class="btn btn-secondary" onclick="schedulePickOff()">Ne radim</button>
+      <button type="button" class="btn btn-primary" onclick="schedulePickAll()" style="margin-bottom:10px;">Ceo dan (${String(state.settings.workStart).padStart(2, "0")}–${String(state.settings.workEnd).padStart(2, "0")}h)</button>
+      <button type="button" class="btn btn-secondary" onclick="schedulePickSome()" style="margin-bottom:10px;">Samo neki sati</button>
+      <button type="button" class="btn btn-secondary" onclick="schedulePickOff()">Ne radim</button>
     </div>
   `;
 }
@@ -1221,12 +1407,16 @@ function renderPickHoursStep() {
   const end = state.settings.workEnd * 60;
   if (!s.pickedHours) s.pickedHours = [];
 
+  const dayLabel = s.date
+    ? `${capitalize(DAYS_LONG[s.date.getDay()])}, ${s.date.getDate()}. ${MONTHS_SHORT[s.date.getMonth()]}`
+    : "";
+
   let html = `<div class="sheet-section">
-    <div class="sheet-section-label">Označi sate koje radiš</div>
+    <div class="sheet-section-label">Označi sate koje radiš${dayLabel ? ` · ${dayLabel}` : ""}</div>
     <div class="time-grid">`;
   for (let m = start; m < end; m += 30) {
     const sel = s.pickedHours.includes(m);
-    html += `<button class="time-chip ${sel ? "selected" : ""}" onclick="pickHourToggle(${m})">${formatMinutes(m)}</button>`;
+    html += `<button type="button" class="time-chip ${sel ? "selected" : ""}" onclick="pickHourToggle(${m})">${formatMinutes(m)}</button>`;
   }
   html += `</div></div>`;
 
@@ -1236,8 +1426,26 @@ function renderPickHoursStep() {
     <div class="sheet-total-label">Označeno</div>
     <div class="sheet-total-value">${label}</div>
   </div>`;
-  html += `<button class="btn btn-primary" onclick="pickHoursSave()">Sačuvaj</button>`;
+  html += `<button type="button" class="btn btn-primary" onclick="pickHoursSave()">Sačuvaj</button>`;
+  if (getDaySchedule(s.date) !== null) {
+    html += `<button type="button" class="btn btn-secondary" style="margin-top:10px;" onclick="resetDayScheduleToDefault()">Vrati na ceo dan</button>`;
+  }
   return html;
+}
+
+function resetDayScheduleToDefault() {
+  const s = newApptState;
+  if (!s || !s.date) return;
+  setDaySchedule(s.date, null);
+  toast("Vraćeno na ceo dan");
+  if (s.returnToTodayAfterSchedule) {
+    state.selectedDate = startOfDay(s.date);
+    renderToday();
+    closeSheet();
+  } else {
+    s.step = "time";
+    renderNewAppointmentSheet();
+  }
 }
 
 function renderDayOffStep() {
@@ -1248,7 +1456,7 @@ function renderDayOffStep() {
       <div style="font-size:56px; margin-bottom:12px;">🚫</div>
       <div style="font-size:20px; font-weight:700; margin-bottom:6px;">Ne radiš ovaj dan</div>
       <div style="font-size:14px; color:var(--text-2); margin-bottom:24px;">${dayLabel}</div>
-      <button class="btn btn-secondary" onclick="dayOffChange()">Ipak radiš</button>
+      <button type="button" class="btn btn-secondary" onclick="dayOffChange()">Ipak radiš</button>
     </div>
   `;
 }
@@ -1279,8 +1487,8 @@ function preloadPickedHours(date) {
   }
   const fakeSlots = state.appointments
     .filter(a => a.status === "scheduled" &&
-                 isFakeAppointment(a) &&
-                 sameDay(new Date(a.date), date))
+      isFakeAppointment(a) &&
+      sameDay(new Date(a.date), date))
     .map(a => minutesFromDate(new Date(a.date)));
   return fakeSlots;
 }
@@ -1289,7 +1497,7 @@ function schedulePickOff() {
   const s = newApptState;
   const key = dateKey(s.date);
   const conflicts = state.appointments.filter(a => {
-    if (a.status !== "scheduled") return false;
+    if (a.status !== "scheduled" || isFakeAppointment(a)) return false;
     return dateKey(new Date(a.date)) === key;
   });
   if (conflicts.length > 0) {
@@ -1311,11 +1519,24 @@ function pickHourToggle(m) {
 
 function pickHoursSave() {
   const s = newApptState;
-  if (s.pickedHours.length === 0) { toast("Označi bar jedan sat"); return; }
-  const sorted = [...s.pickedHours].sort((a,b) => a-b);
+  if (!s.pickedHours || s.pickedHours.length === 0) {
+    toast("Označi bar jedan sat");
+    return;
+  }
+  const sorted = [...s.pickedHours].sort((a, b) => a - b);
   setDaySchedule(s.date, sorted);
+  toast("Sati sačuvani");
+
+  if (s.returnToTodayAfterSchedule) {
+    state.selectedDate = startOfDay(s.date);
+    renderToday();
+    closeSheet();
+    return;
+  }
+
   s.step = "time";
   renderNewAppointmentSheet();
+  renderToday();
 }
 
 function dayOffChange() {
@@ -1327,19 +1548,35 @@ function dayOffChange() {
 
 function editDayScheduleFromCurrent() {
   const s = newApptState;
+  if (!s || !s.date) return;
   s.pickedHours = preloadPickedHours(s.date);
   s.step = "pick-hours";
   renderNewAppointmentSheet();
 }
 
-function editDayScheduleFromDanas() {
-  const d = state.selectedDate;
-  openNewAppointmentSheet();
-  newApptState.date = startOfDay(d);
-  newApptState.displayedMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-  newApptState.pickedHours = preloadPickedHours(d);
-  newApptState.step = "pick-hours";
+function editDayScheduleForDate(d) {
+  const targetDay = startOfDay(d);
+  state.selectedDate = targetDay;
+  newApptClientSearch = "";
+  newApptState = {
+    mode: "new",
+    editingId: null,
+    replacesFakeId: null,
+    step: "pick-hours",
+    date: targetDay,
+    displayedMonth: new Date(targetDay.getFullYear(), targetDay.getMonth(), 1),
+    time: null,
+    clientId: null,
+    services: [],
+    pickedHours: preloadPickedHours(targetDay),
+    fromProfile: false,
+    returnToTodayAfterSchedule: true
+  };
   renderNewAppointmentSheet();
+}
+
+function editDayScheduleFromDanas() {
+  editDayScheduleForDate(state.selectedDate);
 }
 
 // ============================================================
@@ -1371,7 +1608,6 @@ function renderClientPicker() {
 
   let html = "";
 
-  // Search input
   html += `<div style="position:relative; margin-bottom:12px;">
     <svg style="position:absolute; left:14px; top:50%; transform:translateY(-50%); width:18px; height:18px; color:var(--text-3); pointer-events:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     <input
@@ -1385,12 +1621,11 @@ function renderClientPicker() {
     >
   </div>`;
 
-  // Grid klijenata
   if (displayClients.length > 0) {
     html += `<div class="chip-grid">`;
     displayClients.forEach(c => {
       const sel = c.id === s.clientId;
-      html += `<button class="chip ${sel ? "selected" : ""}" onclick="newApptPickClient('${c.id}')">${c.firstName} ${c.lastName}</button>`;
+      html += `<button type="button" class="chip ${sel ? "selected" : ""}" onclick="newApptPickClient('${c.id}')">${c.firstName} ${c.lastName}</button>`;
     });
     html += `</div>`;
   } else if (q) {
@@ -1403,9 +1638,8 @@ function renderClientPicker() {
     </div>`;
   }
 
-  // "+ Nova klijentkinja"
   html += `<div style="margin-top:14px;">
-    <button class="btn btn-secondary" onclick="openNewClientSheet(true)">
+    <button type="button" class="btn btn-secondary" onclick="openNewClientSheet(true)">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       Nova klijentkinja
     </button>
@@ -1436,7 +1670,7 @@ function renderServicePicker() {
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .forEach(sv => {
       const sel = s.services.some(x => x.name === sv.name);
-      html += `<button class="chip ${sel ? "selected" : ""}" onclick="newApptToggleService('${sv.id}')">${sv.name}<span class="chip-sub">${formatMoneyShort(sv.price)}</span></button>`;
+      html += `<button type="button" class="chip ${sel ? "selected" : ""}" onclick="newApptToggleService('${sv.id}')">${sv.name}<span class="chip-sub">${formatMoneyShort(sv.price)}</span></button>`;
     });
   html += `</div>`;
   return html;
@@ -1458,6 +1692,7 @@ function calendarPickDay(ts) {
   const s = newApptState;
   const day = startOfDay(new Date(ts));
   s.date = day;
+  s.returnToTodayAfterSchedule = false;
   if (s.mode !== "edit") {
     s.time = null;
     s.services = [];
@@ -1471,12 +1706,12 @@ function calendarPickDay(ts) {
     sameDay(new Date(a.date), day)
   );
 
-  if (schedule === null && !hasFakes) {
-    s.step = "ask-schedule";
-  } else if (schedule === "off") {
+  if (schedule === "off") {
     s.step = "day-off";
-  } else {
+  } else if (Array.isArray(schedule) || schedule === "all" || hasFakes) {
     s.step = "time";
+  } else {
+    s.step = "ask-schedule";
   }
   renderNewAppointmentSheet();
 }
@@ -1491,7 +1726,7 @@ function newApptPickTime(m) {
   });
   s.replacesFakeId = fakeAtThisTime ? fakeAtThisTime.id : null;
 
-  if (s.time === m && (s.step === "time")) {
+  if (s.time === m && s.step === "time") {
     s.step = s.clientId ? "services" : "client";
     renderNewAppointmentSheet();
     return;
@@ -1573,12 +1808,20 @@ function commitNewAppointment() {
     if (idx >= 0) state.appointments.splice(idx, 1);
   }
 
+  // Ako je sat bio u podešenim slobodnim satima za taj dan, ukloni ga iz daySchedules jer je sada zakazan klijent
+  const daySched = getDaySchedule(date);
+  if (Array.isArray(daySched) && daySched.includes(s.time)) {
+    const remaining = daySched.filter(m => m !== s.time);
+    setDaySchedule(date, remaining.length > 0 ? remaining : null);
+  }
+
   if (s.mode === "edit" && s.editingId) {
     const apt = state.appointments.find(a => a.id === s.editingId);
     if (apt) {
       apt.date = date.toISOString();
       apt.clientId = s.clientId;
       apt.services = s.services;
+      state.selectedDate = startOfDay(date);
       saveState();
       closeSheet();
       toast("Izmena sačuvana");
@@ -1597,6 +1840,7 @@ function commitNewAppointment() {
     status: "scheduled",
     paymentStatus: "unpaid"
   });
+  state.selectedDate = startOfDay(date);
   saveState();
   closeSheet();
   toast("Termin zakazan");
@@ -1605,17 +1849,9 @@ function commitNewAppointment() {
 }
 
 function isSlotBusy(date, minutes) {
-  if (!date) return false;
   const editingId = newApptState?.editingId;
   const replacesFakeId = newApptState?.replacesFakeId;
-  return state.appointments.some(a => {
-    if (a.status !== "scheduled") return false;
-    if (editingId && a.id === editingId) return false;
-    if (replacesFakeId && a.id === replacesFakeId) return false;
-    if (isFakeAppointment(a)) return false;
-    const d = new Date(a.date);
-    return sameDay(d, date) && minutesFromDate(d) === minutes;
-  });
+  return isSlotBusyOnDate(date, minutes, editingId, replacesFakeId);
 }
 
 function openOverlapWarning(otherClient, newClient, onConfirm) {
@@ -1624,7 +1860,7 @@ function openOverlapWarning(otherClient, newClient, onConfirm) {
       <div class="warning-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
       <div class="warning-title">Već imaš termin</div>
       <div class="warning-message"><strong>${otherClient.firstName} ${otherClient.lastName}</strong> već ima termin u <strong>${formatMinutes(newApptState.time)}</strong>.<br><br>Sigurno želiš da zakažeš <strong>${newClient.firstName} ${newClient.lastName}</strong> u isto vreme?</div>
-      <div class="btn-row"><button class="btn btn-secondary" onclick="closeSheet()">Promeni vreme</button><button class="btn btn-primary" onclick="window._overlapConfirm()">Zakaži</button></div>
+      <div class="btn-row"><button type="button" class="btn btn-secondary" onclick="closeSheet()">Promeni vreme</button><button type="button" class="btn btn-primary" onclick="window._overlapConfirm()">Zakaži</button></div>
     </div>`;
   window._overlapConfirm = () => { onConfirm(); window._overlapConfirm = null; };
   openSheet(html);
@@ -1639,7 +1875,7 @@ function openNewClientSheet(returnToAppt = false) {
   newClientReturnToAppt = returnToAppt;
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header"><div class="sheet-title">Nova klijentkinja</div>
-      <button class="sheet-close" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <button class="sheet-close" type="button" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="sheet-body">
       <div class="field-row">
@@ -1648,10 +1884,10 @@ function openNewClientSheet(returnToAppt = false) {
       </div>
       <div class="field"><label class="field-label">Telefon (opciono)</label><input class="field-input" id="new-client-phone" type="tel" autocomplete="off"></div>
       <div class="field"><label class="field-label">Napomena (opciono)</label><input class="field-input" id="new-client-note" type="text" autocomplete="off"></div>
-      <button class="btn btn-primary" onclick="saveNewClient()">Sačuvaj</button>
+      <button type="button" class="btn btn-primary" onclick="saveNewClient()">Sačuvaj</button>
     </div>`;
   openSheet(html);
-  setTimeout(()=>document.getElementById("new-client-first")?.focus(), 350);
+  setTimeout(() => document.getElementById("new-client-first")?.focus(), 250);
 }
 
 function saveNewClient() {
@@ -1662,16 +1898,16 @@ function saveNewClient() {
 
   if (!firstName || !lastName) { toast("Unesi ime i prezime"); return; }
 
-  const dup = state.clients.find(c => !c.isArchived && c.firstName.toLowerCase()===firstName.toLowerCase() && c.lastName.toLowerCase()===lastName.toLowerCase());
+  const dup = state.clients.find(c => !c.isArchived && c.firstName.toLowerCase() === firstName.toLowerCase() && c.lastName.toLowerCase() === lastName.toLowerCase());
   if (dup) {
     if (!confirm(`Već imaš ${dup.firstName} ${dup.lastName}. Sigurno želiš drugu?`)) return;
   }
 
-  const client = { id:"c"+Date.now(), firstName, lastName, phone, note, isArchived:false };
+  const client = { id: "c" + Date.now(), firstName, lastName, phone, note, isArchived: false };
   state.clients.push(client);
   saveState();
 
-  if (newClientReturnToAppt) {
+  if (newClientReturnToAppt && newApptState) {
     newApptState.clientId = client.id;
     newApptState.services = [];
     newApptState.step = "services";
@@ -1706,7 +1942,7 @@ function renderFakeAppointmentSheet(apt) {
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header">
       <div class="sheet-title">Slobodan termin</div>
-      <button class="sheet-close" onclick="closeSheet()">
+      <button class="sheet-close" type="button" onclick="closeSheet()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -1720,14 +1956,14 @@ function renderFakeAppointmentSheet(apt) {
         Ovaj sat je označen kao slobodan.<br>Želiš li da zakažeš klijentkinju?
       </p>
 
-      <button class="btn btn-primary" onclick="fakeApptStartBooking('${apt.id}')">
+      <button type="button" class="btn btn-primary" onclick="fakeApptStartBooking('${apt.id}')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Zakaži klijentkinju
       </button>
-      <button class="btn btn-secondary" style="margin-top:12px;" onclick="fakeApptRemove('${apt.id}')">
+      <button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="fakeApptRemove('${apt.id}')">
         Oslobodi sat
       </button>
-      <button class="btn btn-secondary" style="margin-top:12px; background:transparent; color:var(--text-2);" onclick="closeSheet()">
+      <button type="button" class="btn btn-secondary" style="margin-top:12px; background:transparent; color:var(--text-2);" onclick="closeSheet()">
         Zatvori
       </button>
     </div>`;
@@ -1738,17 +1974,22 @@ function fakeApptStartBooking(fakeId) {
   const fake = state.appointments.find(a => a.id === fakeId);
   if (!fake) return;
   const d = new Date(fake.date);
-  closeSheet();
-
-  setTimeout(() => {
-    openNewAppointmentSheet();
-    newApptState.date = startOfDay(d);
-    newApptState.displayedMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-    newApptState.time = minutesFromDate(d);
-    newApptState.replacesFakeId = fakeId;
-    newApptState.step = "client";
-    renderNewAppointmentSheet();
-  }, 500);
+  newApptClientSearch = "";
+  newApptState = {
+    mode: "new",
+    editingId: null,
+    replacesFakeId: fakeId,
+    step: "client",
+    date: startOfDay(d),
+    displayedMonth: new Date(d.getFullYear(), d.getMonth(), 1),
+    time: minutesFromDate(d),
+    clientId: null,
+    services: [],
+    pickedHours: [],
+    fromProfile: false,
+    returnToTodayAfterSchedule: false
+  };
+  renderNewAppointmentSheet();
 }
 
 function fakeApptRemove(fakeId) {
@@ -1767,7 +2008,7 @@ function fakeApptRemove(fakeId) {
 }
 
 function renderAppointmentDetailSheet() {
-  const apt = state.appointments.find(a=>a.id===currentAptId);
+  const apt = state.appointments.find(a => a.id === currentAptId);
   if (!apt) return;
   const client = clientById(apt.clientId);
   const d = new Date(apt.date);
@@ -1775,7 +2016,7 @@ function renderAppointmentDetailSheet() {
 
   let html = `<div class="sheet-grabber"></div>
     <div class="sheet-header"><div class="sheet-title">Termin</div>
-      <button class="sheet-close" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <button class="sheet-close" type="button" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="sheet-body">
       <div class="detail-hero">
@@ -1794,24 +2035,24 @@ function renderAppointmentDetailSheet() {
   }
 
   html += `<div class="detail-services">
-    ${apt.services.map(s=>`<div class="detail-service-row"><span class="detail-service-name">${s.name}</span><span class="detail-service-price">${formatMoney(s.price)}</span></div>`).join("")}
+    ${apt.services.map(s => `<div class="detail-service-row"><span class="detail-service-name">${s.name}</span><span class="detail-service-price">${formatMoney(s.price)}</span></div>`).join("")}
   </div>
   <div class="detail-total"><span class="detail-total-label">Ukupno</span><span class="detail-total-value">${formatMoney(total)}</span></div>`;
 
   if (apt.status === "scheduled") {
-    html += `<button class="btn btn-success" onclick="openCompletionSheet()">Završeno</button>
-      <button class="btn btn-secondary" style="margin-top:12px;" onclick="sendReminder()">
+    html += `<button type="button" class="btn btn-success" onclick="openCompletionSheet()">Završeno</button>
+      <button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="sendReminder()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
         Pošalji podsetnik
       </button>
       <div class="btn-row">
-        <button class="btn btn-secondary" onclick="openEditAppointment('${apt.id}')">Izmeni</button>
-        <button class="btn btn-danger" onclick="cancelAppointment()">Otkaži</button>
+        <button type="button" class="btn btn-secondary" onclick="openEditAppointment('${apt.id}')">Izmeni</button>
+        <button type="button" class="btn btn-danger" onclick="cancelAppointment()">Otkaži</button>
       </div>`;
   } else if (apt.status === "completed") {
     if (apt.paymentStatus === "unpaid") {
       html += `<div class="unpaid-card" style="margin-bottom:20px;"><div class="unpaid-header"><div class="unpaid-title">Čeka naplatu</div><div class="unpaid-total">${formatMoney(total)}</div></div></div>
-        <button class="btn btn-success" onclick="markAsPaid()">
+        <button type="button" class="btn btn-success" onclick="markAsPaid()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
           Označi kao plaćeno
         </button>`;
@@ -1823,7 +2064,7 @@ function renderAppointmentDetailSheet() {
   }
 
   if (apt.status !== "scheduled") {
-    html += `<button class="btn btn-secondary" style="margin-top:16px;color:var(--danger);" onclick="deleteAppointment()">Obriši termin</button>`;
+    html += `<button type="button" class="btn btn-secondary" style="margin-top:16px;color:var(--danger);" onclick="deleteAppointment()">Obriši termin</button>`;
   }
 
   html += `</div>`;
@@ -1831,7 +2072,7 @@ function renderAppointmentDetailSheet() {
 }
 
 function cancelAppointment() {
-  const apt = state.appointments.find(a=>a.id===currentAptId);
+  const apt = state.appointments.find(a => a.id === currentAptId);
   if (!apt) return;
   const prevStatus = apt.status;
   apt.status = "cancelled";
@@ -1850,7 +2091,7 @@ function cancelAppointment() {
 }
 
 function deleteAppointment() {
-  const idx = state.appointments.findIndex(a=>a.id===currentAptId);
+  const idx = state.appointments.findIndex(a => a.id === currentAptId);
   if (idx < 0) return;
   const backup = state.appointments[idx];
   state.appointments.splice(idx, 1);
@@ -1869,17 +2110,17 @@ function deleteAppointment() {
 }
 
 function sendReminder() {
-  const apt = state.appointments.find(a=>a.id===currentAptId);
+  const apt = state.appointments.find(a => a.id === currentAptId);
   if (!apt) return;
   const client = clientById(apt.clientId);
   const d = new Date(apt.date);
-  const dateStr = `${String(d.getDate()).padStart(2,"0")}.${String(d.getMonth()+1).padStart(2,"0")}.${d.getFullYear()}`;
+  const dateStr = `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
   const text = `${client.firstName}, tvoj sledeći termin:\n${dateStr}. u ${formatTime(d)}\nVidimo se! 💅`;
 
   if (navigator.share) {
-    navigator.share({ text }).catch(()=>{});
+    navigator.share({ text }).catch(() => { });
   } else {
-    navigator.clipboard.writeText(text).then(()=>toast("Kopirano"));
+    navigator.clipboard.writeText(text).then(() => toast("Kopirano"));
   }
 }
 
@@ -1887,7 +2128,7 @@ function sendReminder() {
 // ZAVRŠENO + PLAĆANJE
 // ============================================================
 function openCompletionSheet() {
-  const apt = state.appointments.find(a=>a.id===currentAptId);
+  const apt = state.appointments.find(a => a.id === currentAptId);
   if (!apt) return;
   const total = appointmentTotal(apt);
 
@@ -1899,34 +2140,33 @@ function openCompletionSheet() {
         <div class="success-sub">Da li je plaćeno?</div>
       </div>
       <div class="payment-choice">
-        <button class="payment-btn paid" onclick="completeWithPayment('paid')">
+        <button type="button" class="payment-btn paid" onclick="completeWithPayment('paid')">
           <svg class="payment-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
           <div class="payment-btn-label">Plaćeno</div>
           <div class="payment-btn-sub">${formatMoney(total)}</div>
         </button>
-        <button class="payment-btn unpaid" onclick="completeWithPayment('unpaid')">
+        <button type="button" class="payment-btn unpaid" onclick="completeWithPayment('unpaid')">
           <svg class="payment-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           <div class="payment-btn-label">Nije plaćeno</div>
           <div class="payment-btn-sub">Zapamti dug</div>
         </button>
       </div>
-      <button class="btn btn-secondary" style="margin-top:16px;" onclick="closeSheet()">Otkaži</button>
+      <button type="button" class="btn btn-secondary" style="margin-top:16px;" onclick="closeSheet()">Otkaži</button>
     </div>`;
   openSheet(html);
 }
 
 function completeWithPayment(paymentStatus) {
-  const apt = state.appointments.find(a=>a.id===currentAptId);
+  const apt = state.appointments.find(a => a.id === currentAptId);
   if (!apt) return;
   apt.status = "completed";
   apt.paymentStatus = paymentStatus;
   saveState();
-  closeSheet();
-  setTimeout(()=>openNextAppointmentPrompt(apt), 500);
+  openNextAppointmentPrompt(apt);
 }
 
 function markAsPaid() {
-  const apt = state.appointments.find(a=>a.id===currentAptId);
+  const apt = state.appointments.find(a => a.id === currentAptId);
   if (!apt) return;
   apt.paymentStatus = "paid";
   saveState();
@@ -1943,28 +2183,28 @@ function markAsPaid() {
 // ============================================================
 function openNextAppointmentPrompt(completedApt) {
   const client = clientById(completedApt.clientId);
-  if (!client) return;
+  if (!client) { closeSheet(); return; }
 
-  const completed = state.appointments.filter(a=>a.clientId===client.id && a.status==="completed").sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0, 4);
+  const completed = state.appointments.filter(a => a.clientId === client.id && a.status === "completed").sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 4);
   let daysToAdd = 21;
   if (completed.length >= 3) {
     const gaps = [];
-    for (let i=0; i<completed.length-1 && i<3; i++) {
-      const gap = Math.round((new Date(completed[i].date) - new Date(completed[i+1].date)) / 86400000);
+    for (let i = 0; i < completed.length - 1 && i < 3; i++) {
+      const gap = Math.round((new Date(completed[i].date) - new Date(completed[i + 1].date)) / 86400000);
       if (gap > 0) gaps.push(gap);
     }
     if (gaps.length > 0) {
-      const avg = Math.round(gaps.reduce((s,g)=>s+g,0) / gaps.length);
-      const consistent = gaps.every(g => Math.abs(g-avg) <= 4);
+      const avg = Math.round(gaps.reduce((s, g) => s + g, 0) / gaps.length);
+      const consistent = gaps.every(g => Math.abs(g - avg) <= 4);
       daysToAdd = consistent ? avg : 21;
     }
   }
 
   const suggested = addDays(new Date(), daysToAdd);
   const lastTime = minutesFromDate(new Date(completed[0].date));
-  suggested.setHours(Math.floor(lastTime/60), lastTime%60, 0, 0);
+  suggested.setHours(Math.floor(lastTime / 60), lastTime % 60, 0, 0);
 
-  const dayLabel = daysToAdd <= 7 ? `${daysToAdd} dana` : daysToAdd <= 30 ? `${Math.round(daysToAdd/7)} nedelje` : `${Math.round(daysToAdd/30)} meseca`;
+  const dayLabel = daysToAdd <= 7 ? `${daysToAdd} dana` : daysToAdd <= 30 ? `${Math.round(daysToAdd / 7)} nedelje` : `${Math.round(daysToAdd / 30)} meseca`;
 
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-body" style="padding-top:12px;">
@@ -1976,22 +2216,22 @@ function openNextAppointmentPrompt(completedApt) {
         <div class="next-card-time">${formatTime(suggested)}</div>
         <div class="next-card-date">${capitalize(DAYS_LONG[suggested.getDay()])}, ${suggested.getDate()}. ${MONTHS[suggested.getMonth()]}</div>
       </div>
-      <button class="btn btn-primary" onclick="confirmNextAppointment(${suggested.getTime()}, '${completedApt.id}')">Zakaži</button>
-      <button class="btn btn-secondary" style="margin-top:12px;" onclick="openNewAppointmentSheet('${client.id}')">Drugi termin</button>
-      <button class="btn btn-secondary" style="margin-top:12px;background:transparent;color:var(--text-2);" onclick="closeSheet()">Ne sada</button>
+      <button type="button" class="btn btn-primary" onclick="confirmNextAppointment(${suggested.getTime()}, '${completedApt.id}')">Zakaži</button>
+      <button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="openNewAppointmentSheet('${client.id}')">Drugi termin</button>
+      <button type="button" class="btn btn-secondary" style="margin-top:12px;background:transparent;color:var(--text-2);" onclick="closeSheet()">Ne sada</button>
     </div>`;
   openSheet(html);
 }
 
 function confirmNextAppointment(ts, prevId) {
-  const prev = state.appointments.find(a=>a.id===prevId);
+  const prev = state.appointments.find(a => a.id === prevId);
   if (!prev) return;
   const d = new Date(ts);
   state.appointments.push({
     id: "a" + Date.now(),
     date: d.toISOString(),
     clientId: prev.clientId,
-    services: prev.services.map(s=>({ ...s })),
+    services: prev.services.map(s => ({ ...s })),
     status: "scheduled",
     paymentStatus: "unpaid"
   });
@@ -2007,23 +2247,23 @@ function confirmNextAppointment(ts, prevId) {
 // USLUGE (cenovnik)
 // ============================================================
 function openServiceEditSheet(serviceId) {
-  const svc = state.services.find(s=>s.id===serviceId);
+  const svc = state.services.find(s => s.id === serviceId);
   if (!svc) return;
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header"><div class="sheet-title">Izmeni uslugu</div>
-      <button class="sheet-close" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <button class="sheet-close" type="button" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="sheet-body">
       <div class="field"><label class="field-label">Naziv</label><input class="field-input" id="svc-name" type="text" value="${svc.name}"></div>
       <div class="field"><label class="field-label">Cena (RSD)</label><input class="field-input" id="svc-price" type="number" inputmode="numeric" value="${svc.price}"></div>
-      <button class="btn btn-primary" onclick="saveServiceEdit('${serviceId}')">Sačuvaj</button>
-      <button class="btn btn-danger" style="margin-top:12px;" onclick="archiveService('${serviceId}')">Arhiviraj</button>
+      <button type="button" class="btn btn-primary" onclick="saveServiceEdit('${serviceId}')">Sačuvaj</button>
+      <button type="button" class="btn btn-danger" style="margin-top:12px;" onclick="archiveService('${serviceId}')">Arhiviraj</button>
     </div>`;
   openSheet(html);
 }
 
 function saveServiceEdit(id) {
-  const svc = state.services.find(s=>s.id===id);
+  const svc = state.services.find(s => s.id === id);
   if (!svc) return;
   const name = document.getElementById("svc-name").value.trim();
   const price = Number(document.getElementById("svc-price").value);
@@ -2037,7 +2277,7 @@ function saveServiceEdit(id) {
 }
 
 function archiveService(id) {
-  const svc = state.services.find(s=>s.id===id);
+  const svc = state.services.find(s => s.id === id);
   if (!svc) return;
   svc.isArchived = true;
   saveState();
@@ -2055,22 +2295,22 @@ function archiveService(id) {
 function openNewServiceSheet() {
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header"><div class="sheet-title">Nova usluga</div>
-      <button class="sheet-close" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <button class="sheet-close" type="button" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="sheet-body">
       <div class="field"><label class="field-label">Naziv</label><input class="field-input" id="svc-new-name" type="text"></div>
       <div class="field"><label class="field-label">Cena (RSD)</label><input class="field-input" id="svc-new-price" type="number" inputmode="numeric" value="2000"></div>
-      <button class="btn btn-primary" onclick="saveNewService()">Sačuvaj</button>
+      <button type="button" class="btn btn-primary" onclick="saveNewService()">Sačuvaj</button>
     </div>`;
   openSheet(html);
-  setTimeout(()=>document.getElementById("svc-new-name")?.focus(), 350);
+  setTimeout(() => document.getElementById("svc-new-name")?.focus(), 250);
 }
 
 function saveNewService() {
   const name = document.getElementById("svc-new-name").value.trim();
   const price = Number(document.getElementById("svc-new-price").value);
   if (!name || isNaN(price) || price < 0) { toast("Proveri unos"); return; }
-  state.services.push({ id:"s"+Date.now(), name, price, sortOrder:state.services.length, isArchived:false });
+  state.services.push({ id: "s" + Date.now(), name, price, sortOrder: state.services.length, isArchived: false });
   saveState();
   closeSheet();
   toast("Usluga dodata");
@@ -2086,17 +2326,17 @@ function openEditClientSheet() {
   if (!client) return;
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header"><div class="sheet-title">Izmeni</div>
-      <button class="sheet-close" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <button class="sheet-close" type="button" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="sheet-body">
       <div class="field-row">
         <div class="field"><label class="field-label">Ime</label><input class="field-input" id="edit-first" type="text" value="${client.firstName}"></div>
         <div class="field"><label class="field-label">Prezime</label><input class="field-input" id="edit-last" type="text" value="${client.lastName}"></div>
       </div>
-      <div class="field"><label class="field-label">Telefon</label><input class="field-input" id="edit-phone" type="tel" value="${client.phone||""}"></div>
-      <div class="field"><label class="field-label">Napomena</label><input class="field-input" id="edit-note" type="text" value="${client.note||""}"></div>
-      <button class="btn btn-primary" onclick="saveClientEdit()">Sačuvaj</button>
-      <button class="btn btn-danger" style="margin-top:12px;" onclick="archiveClient()">Arhiviraj</button>
+      <div class="field"><label class="field-label">Telefon</label><input class="field-input" id="edit-phone" type="tel" value="${client.phone || ""}"></div>
+      <div class="field"><label class="field-label">Napomena</label><input class="field-input" id="edit-note" type="text" value="${client.note || ""}"></div>
+      <button type="button" class="btn btn-primary" onclick="saveClientEdit()">Sačuvaj</button>
+      <button type="button" class="btn btn-danger" style="margin-top:12px;" onclick="archiveClient()">Arhiviraj</button>
     </div>`;
   openSheet(html);
 }
@@ -2138,20 +2378,20 @@ function archiveClient() {
 function openWorkHoursSheet() {
   const s = state.settings;
   let options = "";
-  for (let h=5; h<=14; h++) options += `<option value="${h}" ${s.workStart===h?"selected":""}>${String(h).padStart(2,"0")}:00</option>`;
+  for (let h = 5; h <= 14; h++) options += `<option value="${h}" ${s.workStart === h ? "selected" : ""}>${String(h).padStart(2, "0")}:00</option>`;
   let optionsEnd = "";
-  for (let h=15; h<=23; h++) optionsEnd += `<option value="${h}" ${s.workEnd===h?"selected":""}>${String(h).padStart(2,"0")}:00</option>`;
+  for (let h = 15; h <= 23; h++) optionsEnd += `<option value="${h}" ${s.workEnd === h ? "selected" : ""}>${String(h).padStart(2, "0")}:00</option>`;
 
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header"><div class="sheet-title">Radno vreme</div>
-      <button class="sheet-close" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <button class="sheet-close" type="button" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="sheet-body">
       <div class="field-row">
         <div class="field"><label class="field-label">Od</label><select class="field-input" id="work-start">${options}</select></div>
         <div class="field"><label class="field-label">Do</label><select class="field-input" id="work-end">${optionsEnd}</select></div>
       </div>
-      <button class="btn btn-primary" onclick="saveWorkHours()">Sačuvaj</button>
+      <button type="button" class="btn btn-primary" onclick="saveWorkHours()">Sačuvaj</button>
     </div>`;
   openSheet(html);
 }
@@ -2182,14 +2422,14 @@ function openBackupSheet() {
 
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header"><div class="sheet-title">Automatski backup</div>
-      <button class="sheet-close" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <button class="sheet-close" type="button" onclick="closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <div class="sheet-body">
       <p style="color:var(--text-2);font-size:15px;line-height:1.5;margin-bottom:20px;">${statusText}</p>
       ${hasKey ? `
-        <button class="btn ${enabled?"btn-danger":"btn-primary"}" onclick="toggleCloudBackup()">${enabled?"Isključi backup":"Uključi backup"}</button>
-        ${enabled ? `<button class="btn btn-secondary" style="margin-top:12px;" onclick="forceBackup()">Backup sada</button>` : ""}
-        <button class="btn btn-secondary" style="margin-top:12px;" onclick="restoreFromCloudNow()">Vrati iz cloud kopije</button>
+        <button type="button" class="btn ${enabled ? "btn-danger" : "btn-primary"}" onclick="toggleCloudBackup()">${enabled ? "Isključi backup" : "Uključi backup"}</button>
+        ${enabled ? `<button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="forceBackup()">Backup sada</button>` : ""}
+        <button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="restoreFromCloudNow()">Vrati iz cloud kopije</button>
       ` : `
         <div class="note-card" style="font-size:14px;">
           <strong>Kako da uključiš:</strong><br><br>
@@ -2242,7 +2482,7 @@ function exportData() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `noktia-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `noktia-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
   toast("Kopija sačuvana");
@@ -2283,8 +2523,8 @@ function resetData() {
 // ============================================================
 // EVENTS
 // ============================================================
-document.getElementById("btn-prev-day").onclick = () => { state.selectedDate = startOfDay(addDays(state.selectedDate,-1)); saveState(); renderToday(); };
-document.getElementById("btn-next-day").onclick = () => { state.selectedDate = startOfDay(addDays(state.selectedDate,1)); saveState(); renderToday(); };
+document.getElementById("btn-prev-day").onclick = () => { state.selectedDate = startOfDay(addDays(state.selectedDate, -1)); saveState(); renderToday(); };
+document.getElementById("btn-next-day").onclick = () => { state.selectedDate = startOfDay(addDays(state.selectedDate, 1)); saveState(); renderToday(); };
 document.getElementById("btn-back-today").onclick = () => { state.selectedDate = startOfDay(new Date()); saveState(); renderToday(); };
 document.getElementById("btn-new-appointment").onclick = () => openNewAppointmentSheet(null);
 
@@ -2311,7 +2551,7 @@ document.getElementById("file-input").onchange = handleFileImport;
 // ============================================================
 (function setupSwipe() {
   const el = document.getElementById("main-content");
-  let startX=0, startY=0, tracking=false;
+  let startX = 0, startY = 0, tracking = false;
   el.addEventListener("touchstart", e => {
     if (e.touches.length !== 1) return;
     if (document.getElementById("sheet-overlay").classList.contains("visible")) return;
@@ -2328,17 +2568,17 @@ document.getElementById("file-input").onchange = handleFileImport;
     const dx = t.clientX - startX;
     const dy = t.clientY - startY;
     if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return;
-    if (dx > 0) state.selectedDate = startOfDay(addDays(state.selectedDate,-1));
-    else state.selectedDate = startOfDay(addDays(state.selectedDate,1));
+    if (dx > 0) state.selectedDate = startOfDay(addDays(state.selectedDate, -1));
+    else state.selectedDate = startOfDay(addDays(state.selectedDate, 1));
     saveState();
     renderToday();
   }, { passive: true });
 })();
+
 // ============================================================
 // IZVOZ SLOBODNIH TERMINA (za Instagram)
 // ============================================================
 function openExportSlotsSheet() {
-  // Uzmi današnji datum kao početni, a kraj meseca kao krajnji
   const today = new Date();
   const startStr = dateKey(today);
   const endStr = dateKey(new Date(today.getFullYear(), today.getMonth() + 1, 0));
@@ -2346,7 +2586,7 @@ function openExportSlotsSheet() {
   const html = `<div class="sheet-grabber"></div>
     <div class="sheet-header">
       <div class="sheet-title">Izvezi slobodne termine</div>
-      <button class="sheet-close" onclick="closeSheet()">
+      <button class="sheet-close" type="button" onclick="closeSheet()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -2361,7 +2601,7 @@ function openExportSlotsSheet() {
           <input type="date" class="field-input" id="export-end" value="${endStr}">
         </div>
       </div>
-      <button class="btn btn-primary" onclick="generateSlotsText()">Izračunaj i prikaži</button>
+      <button type="button" class="btn btn-primary" onclick="generateSlotsText()">Izračunaj i prikaži</button>
     </div>`;
   openSheet(html);
 }
@@ -2375,8 +2615,8 @@ function generateSlotsText() {
     return;
   }
 
-  let current = startOfDay(new Date(startInput));
-  const end = startOfDay(new Date(endInput));
+  let current = startOfDay(new Date(startInput + "T00:00:00"));
+  const end = startOfDay(new Date(endInput + "T00:00:00"));
 
   if (current > end) {
     toast("Datum 'Od' mora biti pre datuma 'Do'");
@@ -2386,19 +2626,21 @@ function generateSlotsText() {
   let text = "";
 
   while (current <= end) {
-    // 1. Uzmi radne sate
     let workingSlots = [];
     const schedule = getDaySchedule(current);
-    
+
     if (schedule === "off") {
-      workingSlots = []; // Ne radi
+      workingSlots = [];
     } else if (Array.isArray(schedule)) {
-      workingSlots = schedule; // Podesi sate
+      workingSlots = schedule;
+    } else if (schedule === "all") {
+      const start = state.settings.workStart * 60;
+      const endM = state.settings.workEnd * 60;
+      for (let m = start; m < endM; m += 30) workingSlots.push(m);
     } else {
-      // Ako nema "Podesi sate", proveri "Slobodan termin"
-      const fakeAppts = state.appointments.filter(a => 
-        a.status === "scheduled" && 
-        isFakeAppointment(a) && 
+      const fakeAppts = state.appointments.filter(a =>
+        a.status === "scheduled" &&
+        isFakeAppointment(a) &&
         sameDay(new Date(a.date), current)
       );
       if (fakeAppts.length > 0) {
@@ -2406,24 +2648,20 @@ function generateSlotsText() {
       }
     }
 
-    // Ako nema definisanih radnih sati (ni Podesi sate, ni Slobodan termin),
-    // preskačemo ovaj dan jer Jelena nije naglasila da radi.
     if (workingSlots.length > 0) {
-      // 2. Uzmi zauzete sate (samo prave klijentkinje)
       const booked = state.appointments
         .filter(a => a.status === "scheduled" && !isFakeAppointment(a) && sameDay(new Date(a.date), current))
         .map(a => minutesFromDate(new Date(a.date)));
 
-      // 3. Filtriraj samo slobodne
       const available = workingSlots.filter(m => !booked.includes(m));
 
       if (available.length > 0) {
-        available.sort((a,b) => a-b);
-        
+        available.sort((a, b) => a - b);
+
         const formattedSlots = available.map(m => {
           const h = Math.floor(m / 60);
           const min = m % 60;
-          return min === 0 ? String(h).padStart(2,"0") : `${String(h).padStart(2,"0")}:${String(min).padStart(2,"0")}`;
+          return min === 0 ? String(h).padStart(2, "0") : `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
         }).join(",");
 
         const dayStr = String(current.getDate()).padStart(2, "0");
@@ -2442,7 +2680,7 @@ function generateSlotsText() {
   const resultHtml = `<div class="sheet-grabber"></div>
     <div class="sheet-header">
       <div class="sheet-title">Rezultat</div>
-      <button class="sheet-close" onclick="closeSheet()">
+      <button class="sheet-close" type="button" onclick="closeSheet()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -2452,8 +2690,8 @@ function generateSlotsText() {
       </p>
       <textarea id="slots-text" readonly style="width:100%; height:300px; padding:12px; border-radius:12px; background:var(--surface-2); border:none; font-family:monospace; font-size:15px; line-height:1.5; margin-bottom:16px; color:var(--text);">${text.trim()}</textarea>
       <div class="btn-row">
-        <button class="btn btn-secondary" onclick="openExportSlotsSheet()">Nazad</button>
-        <button class="btn btn-primary" onclick="copySlotsText()">Kopiraj tekst</button>
+        <button type="button" class="btn btn-secondary" onclick="openExportSlotsSheet()">Nazad</button>
+        <button type="button" class="btn btn-primary" onclick="copySlotsText()">Kopiraj tekst</button>
       </div>
     </div>`;
   openSheet(resultHtml);
@@ -2466,6 +2704,8 @@ function copySlotsText() {
     closeSheet();
   });
 }
+
+// ============================================================
 // INIT
 // ============================================================
 (function init() {
